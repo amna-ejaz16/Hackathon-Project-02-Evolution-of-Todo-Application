@@ -1,0 +1,175 @@
+/* Global styles - Cyberpunk Dark Theme */
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+:root {
+  --neon-purple: #a855f7;
+  --neon-magenta: #ec4899;
+  --neon-pink: #f472b6;
+  --dark-bg: #030712;
+  --dark-surface: #0a0a0f;
+  --dark-card: #111118;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen,
+    Ubuntu, Cantarell, "Fira Sans", "Droid Sans", "Helvetica Neue", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background: var(--dark-bg);
+  color: #e2e8f0;
+}
+
+/* Glassmorphism utility */
+@layer utilities {
+  .glass {
+    background: rgba(17, 17, 24, 0.7);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid rgba(168, 85, 247, 0.1);
+  }
+
+  .glass-strong {
+    background: rgba(17, 17, 24, 0.85);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid rgba(168, 85, 247, 0.15);
+  }
+
+  .neon-border {
+    border: 1px solid transparent;
+    background: linear-gradient(var(--dark-card), var(--dark-card)) padding-box,
+      linear-gradient(135deg, var(--neon-purple), var(--neon-magenta)) border-box;
+  }
+
+  .neon-border-glow {
+    position: relative;
+  }
+
+  .neon-border-glow::before {
+    content: "";
+    position: absolute;
+    inset: -2px;
+    border-radius: inherit;
+    padding: 2px;
+    background: linear-gradient(135deg, var(--neon-purple), var(--neon-magenta));
+    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    opacity: 0.5;
+  }
+
+  .text-gradient {
+    background: linear-gradient(135deg, var(--neon-purple) 0%, var(--neon-magenta) 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+}
+
+/* Neon button base */
+@layer components {
+  .btn-neon {
+    @apply relative px-6 py-3 font-semibold text-white rounded-xl overflow-hidden;
+    @apply transition-all duration-300 ease-out;
+    background: linear-gradient(135deg, #a855f7 0%, #ec4899 50%, #f472b6 100%);
+    box-shadow: 0 0 20px rgba(168, 85, 247, 0.4), 0 0 40px rgba(236, 72, 153, 0.2);
+  }
+
+  .btn-neon:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 0 30px rgba(168, 85, 247, 0.6), 0 0 60px rgba(236, 72, 153, 0.4);
+  }
+
+  .btn-neon:active {
+    transform: translateY(0);
+  }
+
+  .btn-neon:disabled {
+    @apply opacity-50 cursor-not-allowed;
+    transform: none;
+    box-shadow: none;
+  }
+
+  /* Input styling for dark theme */
+  .input-dark {
+    @apply w-full px-4 py-3 rounded-xl transition-all duration-300;
+    @apply bg-dark-800 border border-dark-600 text-white placeholder-gray-500;
+    @apply focus:outline-none focus:border-neon-purple focus:ring-2 focus:ring-neon-purple/20;
+  }
+
+  .input-dark:focus {
+    box-shadow: 0 0 0 3px rgba(168, 85, 247, 0.1), 0 0 20px rgba(168, 85, 247, 0.1);
+  }
+
+  /* Card styling for dark theme */
+  .card-dark {
+    @apply rounded-2xl p-6;
+    background: rgba(17, 17, 24, 0.8);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid rgba(168, 85, 247, 0.1);
+  }
+
+  .card-glow {
+    @apply card-dark;
+    box-shadow: 0 0 40px rgba(168, 85, 247, 0.1), 0 0 80px rgba(236, 72, 153, 0.05);
+  }
+
+  /* Feature card with hover effect */
+  .feature-card {
+    @apply card-dark transition-all duration-300;
+  }
+
+  .feature-card:hover {
+    transform: translateY(-4px);
+    border-color: rgba(168, 85, 247, 0.3);
+    box-shadow: 0 0 30px rgba(168, 85, 247, 0.2), 0 0 60px rgba(236, 72, 153, 0.1);
+  }
+}
+
+/* Scrollbar styling for dark theme */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #0a0a0f;
+}
+
+::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #a855f7 0%, #ec4899 100%);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, #c084fc 0%, #f472b6 100%);
+}
+
+/* Selection color */
+::selection {
+  background: rgba(168, 85, 247, 0.3);
+  color: #fff;
+}
+
+/* Priority badge colors for dark theme */
+.priority-low-dark {
+  @apply bg-emerald-500/20 text-emerald-400 border-emerald-500/30;
+}
+
+.priority-medium-dark {
+  @apply bg-amber-500/20 text-amber-400 border-amber-500/30;
+}
+
+.priority-high-dark {
+  @apply bg-red-500/20 text-red-400 border-red-500/30;
+}

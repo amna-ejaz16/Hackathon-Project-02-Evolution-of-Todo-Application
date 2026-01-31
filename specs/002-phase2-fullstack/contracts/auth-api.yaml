@@ -1,0 +1,474 @@
+openapi: 3.0.3
+info:
+  title: Todo Application - Authentication & Task API
+  description: |
+    API specification for the multi-user Todo application with JWT-based authentication.
+
+    ## Authentication Flow
+    1. User registers or signs in via Better Auth endpoints (handled by frontend)
+    2. Better Auth issues JWT token with user claims (id, email)
+    3. Frontend attaches JWT to all API requests via Authorization header
+    4. Backend verifies JWT signature and extracts user identity
+    5. Backend filters all data by authenticated user_id
+
+    ## Security
+    - All /tasks endpoints require valid JWT token
+    - Tokens verified using shared BETTER_AUTH_SECRET
+    - User data isolation enforced on all operations
+  version: 1.0.0
+  contact:
+    name: API Support
+
+servers:
+  - url: http://localhost:8000
+    description: Local development server
+  - url: https://api.example.com
+    description: Production server
+
+tags:
+  - name: Health
+    description: Health check endpoints (no auth required)
+  - name: Tasks
+    description: Task CRUD operations (auth required)
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token issued by Better Auth
+
+  schemas:
+    Task:
+      type: object
+      required:
+        - id
+        - title
+        - completed
+        - created_at
+      properties:
+        id:
+          type: integer
+          description: Unique task identifier
+          example: 1
+        title:
+          type: string
+          maxLength: 200
+          description: Task title
+          example: "Complete project documentation"
+        description:
+          type: string
+          nullable: true
+          description: Optional detailed description
+          example: "Write API docs and update README"
+        completed:
+          type: boolean
+          description: Task completion status
+          example: false
+        priority:
+          type: string
+          enum: [low, medium, high]
+          default: medium
+          description: Task priority level
+          example: "high"
+        category:
+          type: string
+          maxLength: 50
+          nullable: true
+          description: Optional category/tag
+          example: "work"
+        due_date:
+          type: string
+          format: date
+          nullable: true
+          description: Optional due date
+          example: "2026-02-01"
+        created_at:
+          type: string
+          format: date-time
+          description: Task creation timestamp
+          example: "2026-01-25T10:30:00Z"
+        updated_at:
+          type: string
+          format: date-time
+          description: Last update timestamp
+          example: "2026-01-25T10:30:00Z"
+
+    TaskCreate:
+      type: object
+      required:
+        - title
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: Task title (required)
+          example: "Buy groceries"
+        description:
+          type: string
+          nullable: true
+          description: Optional description
+          example: "Milk, eggs, bread"
+        priority:
+          type: string
+          enum: [low, medium, high]
+          default: medium
+          description: Task priority
+          example: "low"
+        category:
+          type: string
+          maxLength: 50
+          nullable: true
+          description: Optional category
+          example: "personal"
+        due_date:
+          type: string
+          format: date
+          nullable: true
+          description: Optional due date
+          example: "2026-01-30"
+
+    TaskUpdate:
+      type: object
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: Updated title
+        description:
+          type: string
+          nullable: true
+          description: Updated description
+        completed:
+          type: boolean
+          description: Updated completion status
+        priority:
+          type: string
+          enum: [low, medium, high]
+          description: Updated priority
+        category:
+          type: string
+          maxLength: 50
+          nullable: true
+          description: Updated category
+        due_date:
+          type: string
+          format: date
+          nullable: true
+          description: Updated due date
+
+    TaskList:
+      type: object
+      required:
+        - tasks
+        - total
+      properties:
+        tasks:
+          type: array
+          items:
+            $ref: '#/components/schemas/Task'
+        total:
+          type: integer
+          description: Total number of tasks for the user
+          example: 5
+
+    Error:
+      type: object
+      required:
+        - detail
+      properties:
+        detail:
+          type: string
+          description: Error message
+          example: "Could not validate credentials"
+
+    HealthResponse:
+      type: object
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          enum: [healthy, unhealthy]
+          example: "healthy"
+        timestamp:
+          type: string
+          format: date-time
+          example: "2026-01-25T10:30:00Z"
+
+  responses:
+    Unauthorized:
+      description: Authentication failed - missing, invalid, or expired token
+      headers:
+        WWW-Authenticate:
+          schema:
+            type: string
+            example: "Bearer"
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            detail: "Could not validate credentials"
+
+    NotFound:
+      description: Resource not found (or not owned by authenticated user)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            detail: "Task not found"
+
+    ValidationError:
+      description: Request validation failed
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              detail:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    loc:
+                      type: array
+                      items:
+                        type: string
+                    msg:
+                      type: string
+                    type:
+                      type: string
+
+paths:
+  /health:
+    get:
+      tags:
+        - Health
+      summary: Health check
+      description: Check if the API is running. No authentication required.
+      operationId: healthCheck
+      responses:
+        '200':
+          description: API is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /tasks:
+    get:
+      tags:
+        - Tasks
+      summary: List user tasks
+      description: |
+        Retrieve all tasks belonging to the authenticated user.
+        Results are automatically filtered by the user_id from the JWT token.
+      operationId: listTasks
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: completed
+          in: query
+          required: false
+          schema:
+            type: boolean
+          description: Filter by completion status
+        - name: priority
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [low, medium, high]
+          description: Filter by priority
+        - name: category
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Filter by category
+        - name: sort
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [created_at, due_date, priority, title]
+            default: created_at
+          description: Sort field
+        - name: order
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
+          description: Sort order
+      responses:
+        '200':
+          description: List of user's tasks
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+    post:
+      tags:
+        - Tasks
+      summary: Create a new task
+      description: |
+        Create a new task for the authenticated user.
+        The task is automatically associated with the user_id from the JWT token.
+      operationId: createTask
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TaskCreate'
+      responses:
+        '201':
+          description: Task created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /tasks/{task_id}:
+    parameters:
+      - name: task_id
+        in: path
+        required: true
+        schema:
+          type: integer
+        description: Task ID
+
+    get:
+      tags:
+        - Tasks
+      summary: Get a specific task
+      description: |
+        Retrieve a specific task by ID.
+        Returns 404 if the task doesn't exist OR doesn't belong to the authenticated user.
+      operationId: getTask
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Task details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    patch:
+      tags:
+        - Tasks
+      summary: Update a task
+      description: |
+        Update a task's properties.
+        Only the task owner can update. Returns 404 for non-owned tasks.
+      operationId: updateTask
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TaskUpdate'
+      responses:
+        '200':
+          description: Task updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+    delete:
+      tags:
+        - Tasks
+      summary: Delete a task
+      description: |
+        Delete a task.
+        Only the task owner can delete. Returns 404 for non-owned tasks.
+      operationId: deleteTask
+      security:
+        - BearerAuth: []
+      responses:
+        '204':
+          description: Task deleted successfully (no content)
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /tasks/{task_id}/complete:
+    parameters:
+      - name: task_id
+        in: path
+        required: true
+        schema:
+          type: integer
+        description: Task ID
+
+    post:
+      tags:
+        - Tasks
+      summary: Mark task as complete
+      description: Convenience endpoint to mark a task as completed.
+      operationId: completeTask
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Task marked as complete
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      tags:
+        - Tasks
+      summary: Mark task as incomplete
+      description: Convenience endpoint to mark a task as incomplete.
+      operationId: uncompleteTask
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Task marked as incomplete
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'

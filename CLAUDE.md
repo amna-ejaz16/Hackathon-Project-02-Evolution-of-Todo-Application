@@ -209,9 +209,92 @@ Wait for consent; never auto-create ADRs. Group related decisions (stacks, authe
 ## Code Standards
 See `.specify/memory/constitution.md` for code quality, testing, performance, security, and architecture principles.
 
+## Specialized Agent Usage (Phase 2)
+
+### Agent Delegation Rules
+Use the following specialized agents for their respective domains:
+
+| Agent | Use For |
+|-------|---------|
+| **auth-security-engineer** | User authentication (signup/signin), Better Auth configuration, JWT token handling, session management, route protection |
+| **nextjs-ui-architect** | Next.js 16+ App Router pages, responsive UI components, layouts, frontend state management, API integration |
+| **neon-postgres-ops** | Database schema design, Neon PostgreSQL setup, migrations, query optimization, connection management |
+| **fastapi-backend** | FastAPI endpoints, request/response handling, Pydantic validation, SQLModel ORM, middleware, JWT verification |
+
+### Agent Invocation Guidelines
+1. **Authentication Work** → Use `auth-security-engineer` agent
+   - Better Auth setup and configuration
+   - JWT token generation and validation
+   - User signup/signin flows
+   - Protected route implementation
+
+2. **Frontend Development** → Use `nextjs-ui-architect` agent
+   - Page and component creation
+   - App Router file structure
+   - Responsive layouts
+   - Form handling and validation
+   - API calls with JWT tokens
+
+3. **Database Operations** → Use `neon-postgres-ops` agent
+   - Schema design for users, tasks, categories
+   - Neon PostgreSQL connection setup
+   - Migration scripts
+   - Query optimization and indexing
+
+4. **Backend API Development** → Use `fastapi-backend` agent
+   - RESTful endpoint implementation
+   - SQLModel models and relationships
+   - JWT token verification middleware
+   - Request validation with Pydantic
+
+## Phase 2 Technology Stack
+
+| Layer | Technology |
+|-------|------------|
+| Frontend | Next.js 16+ (App Router) |
+| Backend | Python FastAPI |
+| ORM | SQLModel |
+| Database | Neon Serverless PostgreSQL |
+| Authentication | Better Auth (JWT tokens) |
+| Spec-Driven | Claude Code + Spec-Kit Plus |
+
+## Phase 2 Core Functionality
+
+### Task Management Features
+1. **Add Task** - Create new tasks with title, description, due date
+2. **Delete Task** - Remove tasks (soft or hard delete)
+3. **Update Task** - Modify task details
+4. **View Task List** - Display all user tasks
+5. **Mark as Complete** - Toggle task completion status
+6. **Priorities & Tags/Categories** - Assign priority (High/Medium/Low) and labels (Work/Home/etc.)
+7. **Search & Filter** - Search by keyword; filter by status, priority, category, due date
+8. **Sort Tasks** - Reorder by due date, priority, or alphabetically
+
+### Authentication Flow (Better Auth + JWT)
+```
+1. User logs in on Frontend → Better Auth creates session and issues JWT token
+2. Frontend makes API call → Includes JWT in Authorization: Bearer <token> header
+3. Backend receives request → Extracts token, verifies signature using shared secret
+4. Backend identifies user → Decodes token to get user ID, email
+5. Backend filters data → Returns only tasks belonging to that user
+```
+
+### API Design Requirements
+- RESTful endpoints for all CRUD operations
+- User-scoped data access (tasks filtered by authenticated user)
+- Proper HTTP status codes and error responses
+- Input validation using Pydantic models
+
 ## Active Technologies
 - Python 3.13+ + Standard library only (no external packages) (001-phase1-console-todo)
 - In-memory data structures (list of dictionaries or custom Task objects) (001-phase1-console-todo)
+- Next.js 16+ with App Router (002-phase2-fullstack)
+- Python FastAPI with SQLModel ORM (002-phase2-fullstack)
+- Neon Serverless PostgreSQL (002-phase2-fullstack)
+- Better Auth with JWT tokens (002-phase2-fullstack)
+- Python 3.11+ (backend), TypeScript/Node.js 20+ (frontend) (002-phase2-fullstack)
+- Neon PostgreSQL (users table, sessions table via Better Auth, tasks table) (002-phase2-fullstack)
 
 ## Recent Changes
 - 001-phase1-console-todo: Added Python 3.13+ + Standard library only (no external packages)
+- 002-phase2-fullstack: Added fullstack web application with Next.js, FastAPI, Neon PostgreSQL, and Better Auth
