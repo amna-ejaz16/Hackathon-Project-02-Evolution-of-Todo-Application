@@ -1,138 +1,224 @@
-# Todo Application - Phase I: In-Memory Console Application
+# Todo Application - Phase II: Full-Stack Web Application
 
-A simple, in-memory console-based todo application built with Python 3.13+ following Spec-Driven Development principles.
+A secure, multi-user todo application with authentication built using Next.js, FastAPI, Better Auth, and Neon PostgreSQL.
 
 ## Features
 
-- ✅ **Create Tasks**: Add new tasks with title and optional description
-- ✅ **View Tasks**: Display all tasks with completion status
-- ✅ **Update Tasks**: Modify task titles and descriptions
-- ✅ **Delete Tasks**: Remove tasks with confirmation prompt
-- ✅ **Mark Complete**: Toggle tasks between complete and incomplete states
+- **User Authentication**: Secure signup/signin with Better Auth and JWT tokens
+- **Multi-User Support**: Complete user isolation - each user sees only their own tasks
+- **Full CRUD Operations**: Create, read, update, and delete tasks
+- **Task Management**: Mark tasks complete/incomplete, add descriptions
+- **Responsive UI**: Modern interface built with Next.js and Tailwind CSS
+- **Secure API**: JWT-protected endpoints with stateless authentication
+
+## Tech Stack
+
+| Layer | Technology |
+|-------|------------|
+| Frontend | Next.js 15+ (App Router), React 19, Tailwind CSS |
+| Backend | Python FastAPI, SQLModel ORM |
+| Database | Neon Serverless PostgreSQL |
+| Authentication | Better Auth (frontend) + JWT verification (backend) |
+| ORM (Frontend) | Drizzle ORM |
 
 ## Prerequisites
 
-- Python 3.13 or higher
-- No external dependencies required (uses Python standard library only)
-
-## Installation
-
-1. Clone or download this repository
-2. Ensure Python 3.13+ is installed:
-   ```bash
-   python --version
-   ```
-
-## Running the Application
-
-Run the application from the project root directory:
-
-```bash
-PYTHONPATH=src python src/main.py
-```
-
-Or on Windows:
-```cmd
-set PYTHONPATH=src && python src/main.py
-```
-
-## Usage
-
-Once the application starts, you'll see a main menu with 6 options:
-
-```
-=== Todo Application ===
-1. View all tasks
-2. Add new task
-3. Update task
-4. Delete task
-5. Mark task as complete/incomplete
-6. Exit
-```
-
-### Example Workflow
-
-1. **Add a task**: Select option 2, enter title and optional description
-2. **View tasks**: Select option 1 to see all tasks with ☐ (pending) or ☑ (completed) status
-3. **Mark complete**: Select option 5, enter task ID to toggle completion
-4. **Update task**: Select option 3, enter task ID and new details
-5. **Delete task**: Select option 4, enter task ID and confirm with 'yes'
-6. **Exit**: Select option 6 to quit
-
-## Important Notes
-
-⚠️ **In-Memory Storage**: All tasks are stored in memory only. When you exit the application, all data will be lost. This is by design for Phase I.
-
-## Testing
-
-Run the automated test suite:
-
-```bash
-PYTHONPATH=src python test_main_manual.py
-```
-
-All tests should pass with the message:
-```
-✓ ALL TESTS PASSED!
-The application is ready for use!
-```
+- Node.js 20+
+- Python 3.11+
+- Neon PostgreSQL account (https://neon.tech)
 
 ## Project Structure
 
 ```
 .
-├── src/
-│   ├── models/
-│   │   ├── __init__.py
-│   │   └── task.py          # Task entity (dataclass)
-│   ├── services/
-│   │   ├── __init__.py
-│   │   └── task_manager.py  # Business logic (CRUD operations)
-│   ├── cli/
-│   │   ├── __init__.py
-│   │   └── console_interface.py  # User interface
-│   └── main.py              # Application entry point
-├── tests/
-│   ├── unit/
-│   └── integration/
-├── specs/
-│   └── 001-phase1-console-todo/
-│       ├── spec.md          # Feature specification
-│       ├── plan.md          # Architecture plan
-│       └── tasks.md         # Implementation tasks
-├── test_main_manual.py      # Automated test suite
-└── README.md
+├── frontend/                 # Next.js frontend application
+│   ├── src/
+│   │   ├── app/
+│   │   │   ├── (auth)/       # Auth pages (signin, signup)
+│   │   │   ├── api/          # API routes (Better Auth)
+│   │   │   ├── dashboard/    # Task dashboard
+│   │   │   └── layout.tsx
+│   │   ├── lib/
+│   │   │   ├── auth.ts       # Better Auth server config
+│   │   │   ├── auth-client.ts # Better Auth client
+│   │   │   ├── api.ts        # Backend API client
+│   │   │   └── db/           # Drizzle schema
+│   │   └── middleware.ts     # Route protection
+│   └── package.json
+│
+├── backend/                  # FastAPI backend application
+│   ├── src/
+│   │   ├── api/
+│   │   │   ├── deps.py       # JWT auth dependency
+│   │   │   ├── tasks.py      # Task CRUD endpoints
+│   │   │   └── health.py     # Health check
+│   │   ├── core/
+│   │   │   ├── config.py     # Environment config
+│   │   │   ├── database.py   # Neon DB connection
+│   │   │   └── security.py   # JWT verification
+│   │   ├── models/
+│   │   │   ├── task.py       # Task SQLModel
+│   │   │   └── user.py       # User model
+│   │   └── main.py           # FastAPI app
+│   └── requirements.txt
+│
+└── specs/                    # Spec-Driven Development artifacts
+    └── 002-phase2-fullstack/
+        ├── spec.md
+        ├── plan.md
+        └── tasks.md
 ```
 
-## Architecture
+## Setup Instructions
 
-The application follows a three-layer architecture:
+### 1. Clone and Checkout Phase 2 Branch
 
-1. **Models Layer** (`src/models/`): Data structures (Task entity)
-2. **Services Layer** (`src/services/`): Business logic (TaskManager)
-3. **CLI Layer** (`src/cli/`): User interface (ConsoleInterface)
+```bash
+git clone <repository-url>
+cd The-Evolution-of-Todo-Application
+git checkout 002-phase2-fullstack
+```
+
+### 2. Set Up Neon Database
+
+1. Create a Neon account at https://neon.tech
+2. Create a new project and database
+3. Copy the connection string
+
+### 3. Configure Environment Variables
+
+**Frontend** (`frontend/.env.local`):
+```env
+DATABASE_URL=postgresql://user:password@host/database?sslmode=require
+BETTER_AUTH_SECRET=your-secret-key-min-32-characters
+BETTER_AUTH_URL=http://localhost:3000
+NEXT_PUBLIC_BACKEND_URL=http://localhost:8000
+```
+
+**Backend** (`backend/.env`):
+```env
+DATABASE_URL=postgresql://user:password@host/database?sslmode=require
+BETTER_AUTH_SECRET=your-secret-key-min-32-characters
+CORS_ORIGINS=http://localhost:3000
+```
+
+> **Important**: Use the same `BETTER_AUTH_SECRET` in both frontend and backend for JWT verification.
+
+### 4. Install and Run Backend
+
+```bash
+cd backend
+
+# Create virtual environment
+python -m venv venv
+
+# Activate virtual environment
+# On Linux/Mac:
+source venv/bin/activate
+# On Windows:
+venv\Scripts\activate
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Run the server
+uvicorn src.main:app --reload --port 8000
+```
+
+Backend will be available at: http://localhost:8000
+
+### 5. Install and Run Frontend
+
+```bash
+cd frontend
+
+# Install dependencies
+npm install
+
+# Run development server
+npm run dev
+```
+
+Frontend will be available at: http://localhost:3000
+
+## API Endpoints
+
+### Authentication (Better Auth - Frontend)
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/auth/sign-up` | Register new user |
+| POST | `/api/auth/sign-in` | Sign in user |
+| POST | `/api/auth/sign-out` | Sign out user |
+| GET | `/api/auth/session` | Get current session |
+
+### Tasks (FastAPI - Backend)
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/tasks` | List all tasks (user-scoped) |
+| POST | `/api/tasks` | Create new task |
+| GET | `/api/tasks/{id}` | Get task by ID |
+| PUT | `/api/tasks/{id}` | Update task |
+| DELETE | `/api/tasks/{id}` | Delete task |
+| GET | `/health` | Health check |
+
+All `/api/tasks` endpoints require `Authorization: Bearer <token>` header.
+
+## Authentication Flow
+
+```
+1. User signs up/in → Better Auth creates session + issues JWT
+2. Frontend stores JWT → Attaches to API requests
+3. Backend receives request → Extracts JWT from Authorization header
+4. Backend verifies JWT → Uses shared BETTER_AUTH_SECRET
+5. Backend identifies user → Filters tasks by user_id from token
+6. Response returned → Only user's own data
+```
+
+## Usage
+
+1. **Register**: Visit http://localhost:3000/signup
+2. **Sign In**: Visit http://localhost:3000/signin
+3. **Dashboard**: After login, manage your tasks at /dashboard
+4. **Sign Out**: Click sign out button to end session
+
+## Security Features
+
+- Passwords hashed with bcrypt (via Better Auth)
+- JWT tokens with expiration
+- User data isolation at database query level
+- CORS configuration for allowed origins
+- Environment-based secret management
 
 ## Success Criteria
 
-All success criteria from the specification have been validated:
+- ✅ **SC-001**: Users can complete registration in under 30 seconds
+- ✅ **SC-002**: Users can sign in successfully in under 10 seconds
+- ✅ **SC-003**: 100% of unauthenticated API requests receive 401 Unauthorized
+- ✅ **SC-004**: 100% of users can only access their own tasks
+- ✅ **SC-005**: Stateless authentication (no server-side session storage for API)
+- ✅ **SC-006**: Generic error messages for invalid credentials
+- ✅ **SC-007**: Secure password hashing (never stored in plaintext)
 
-- ✅ **SC-001**: Users can create a new task in under 10 seconds
-- ✅ **SC-002**: Users can view task list with a single menu selection
-- ✅ **SC-003**: Completed tasks visually distinguished from pending tasks
-- ✅ **SC-004**: All 5 operations accessible from main menu
-- ✅ **SC-005**: Task state maintained correctly throughout session
-- ✅ **SC-006**: Clear feedback for every user action
-- ✅ **SC-007**: Full task lifecycle works without errors
-- ✅ **SC-008**: Edge cases handled gracefully
+## Phase Evolution
 
-## Future Phases
+| Phase | Description | Status |
+|-------|-------------|--------|
+| Phase I | In-memory console application | ✅ Complete (main branch) |
+| Phase II | Full-stack web application | ✅ Complete (this branch) |
+| Phase III | AI-powered chatbot | Planned |
+| Phase IV | Kubernetes deployment | Planned |
+| Phase V | Event-driven cloud architecture | Planned |
 
-This is Phase I of a multi-phase evolution:
+## Troubleshooting
 
-- **Phase II**: Web interface with persistent database storage (Next.js, FastAPI, Neon DB)
-- **Phase III**: AI-powered chatbot for natural language task management
-- **Phase IV**: Kubernetes deployment for scalability
-- **Phase V**: Event-driven architecture with Kafka and cloud deployment
+### Common Issues
+
+| Problem | Solution |
+|---------|----------|
+| JWT verification fails | Ensure `BETTER_AUTH_SECRET` is identical in frontend and backend |
+| Database connection error | Verify `DATABASE_URL` format and Neon project is active |
+| CORS errors | Add frontend URL to `CORS_ORIGINS` in backend |
+| 401 on all requests | Check token is being sent in Authorization header |
 
 ## License
 
