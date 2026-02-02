@@ -1,5 +1,9 @@
 import type { NextConfig } from "next";
 import path from "path";
+import { fileURLToPath } from "url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const nextConfig: NextConfig = {
   // Configure webpack to handle Node.js modules and path aliases
@@ -8,7 +12,7 @@ const nextConfig: NextConfig = {
     config.resolve = config.resolve || {};
     config.resolve.alias = {
       ...config.resolve.alias,
-      "@": path.resolve(__dirname, "src"),
+      "@": path.join(__dirname, "src"),
     };
 
     if (isServer) {
