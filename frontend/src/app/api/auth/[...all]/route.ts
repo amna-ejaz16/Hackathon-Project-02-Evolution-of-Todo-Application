@@ -108,13 +108,30 @@ export async function POST(request: NextRequest) {
 /**
  * Handle CORS preflight requests.
  */
-export async function OPTIONS() {
+export async function OPTIONS(request: NextRequest) {
+  const origin = request.headers.get("origin");
+  
+  // List of allowed origins
+  const allowedOrigins = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "https://my-todo-app-mu-hazel.vercel.app", // Production
+    process.env.NEXT_PUBLIC_VERCEL_URL ? `https://${process.env.NEXT_PUBLIC_VERCEL_URL}` : "", // Automatic Vercel URL
+  ];
+
+  // Allow dynamic Vercel previews (ending in .vercel.app)
+  const isAllowed = origin && (
+    allowedOrigins.includes(origin) || 
+    origin.endsWith(".vercel.app") // Caution: effectively allows all Vercel apps, strict if needed
+  );
+
   return new NextResponse(null, {
     status: 204,
     headers: {
-      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Origin": isAllowed ? origin : "null",
       "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
       "Access-Control-Allow-Headers": "Content-Type, Authorization",
+      "Access-Control-Allow-Credentials": "true", // Required for cookies
     },
   });
 }
