@@ -53,6 +53,10 @@ def create_app() -> FastAPI:
         allow_origins=[
             "http://localhost:3000",  # Next.js dev server
             "http://127.0.0.1:3000",
+            # Vercel Production
+            "https://my-todo-app-mu-hazel.vercel.app",
+            # Vercel Preview (Dynamic) - Specific one mentioned by user
+            "https://my-todo-recuuopsq-amna-ejaz16s-projects.vercel.app",
         ],
         allow_credentials=True,
         allow_methods=["*"],
