@@ -84,6 +84,8 @@ export const auth = betterAuth({
     "http://localhost:3000",
     "http://127.0.0.1:3000",
     process.env.BETTER_AUTH_URL || "http://localhost:3000",
+    "https://my-todo-app-mu-hazel.vercel.app", // Production
+    "https://my-todo-recuuopsq-amna-ejaz16s-projects.vercel.app", // Preview
   ],
 
   // Database configuration using Drizzle adapter with Neon WebSocket
