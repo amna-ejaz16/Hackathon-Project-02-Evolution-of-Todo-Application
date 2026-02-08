@@ -54,7 +54,7 @@ def create_app() -> FastAPI:
             "http://localhost:3000",  # Next.js dev server
             "http://127.0.0.1:3000",
             # Vercel Production
-            "https://my-todo-app-jet-pi.vercel.app",
+            "https://my-todo-app-jet-pi.vercel.app/",
         ],
         allow_credentials=True,
         allow_methods=["*"],
