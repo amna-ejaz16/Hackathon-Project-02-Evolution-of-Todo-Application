@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { signOut } from "@/lib/auth-client";
 import { api, ApiError } from "@/lib/api";
+import ChatWidget from "@/components/chat/ChatWidget";
 
 /**
  * Session user type from Better Auth.
@@ -1277,6 +1278,9 @@ export default function DashboardClient({ user }: DashboardClientProps) {
           )}
         </motion.section>
       </main>
+
+      {/* AI Chat Widget */}
+      <ChatWidget onTaskChange={fetchTasks} />
     </div>
   );
 }

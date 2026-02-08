@@ -294,6 +294,8 @@ Use the following specialized agents for their respective domains:
 - Better Auth with JWT tokens (002-phase2-fullstack)
 - Python 3.11+ (backend), TypeScript/Node.js 20+ (frontend) (002-phase2-fullstack)
 - Neon PostgreSQL (users table, sessions table via Better Auth, tasks table) (002-phase2-fullstack)
+- Python 3.11+ (backend), TypeScript/Node.js 20+ (frontend) + OpenAI Agents SDK `openai-agents>=0.8.0` (backend), Framer Motion (frontend, existing) (003-phase3-ai-chatbot)
+- Neon PostgreSQL (existing) — new tables: `conversation`, `message` (003-phase3-ai-chatbot)
 
 ## Recent Changes
 - 001-phase1-console-todo: Added Python 3.13+ + Standard library only (no external packages)

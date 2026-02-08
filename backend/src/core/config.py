@@ -16,6 +16,7 @@ class Settings:
         self.host: str = os.getenv("HOST", "0.0.0.0")
         self.port: int = int(os.getenv("PORT", "8000"))
         self.debug: bool = os.getenv("DEBUG", "false").lower() == "true"
+        self.openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
 
         # Validate required settings
         if not self.better_auth_secret:
@@ -24,6 +25,8 @@ class Settings:
             raise ValueError("BETTER_AUTH_SECRET must be at least 32 characters")
         if not self.database_url:
             raise ValueError("DATABASE_URL environment variable is required")
+        if not self.openai_api_key:
+            raise ValueError("OPENAI_API_KEY environment variable is required")
 
 
 @lru_cache

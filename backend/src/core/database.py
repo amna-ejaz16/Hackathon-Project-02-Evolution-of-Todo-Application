@@ -48,8 +48,9 @@ def create_db_and_tables():
     try:
         engine = get_engine()
 
-        # Import Task model to ensure it's registered
+        # Import models to ensure they're registered
         from ..models.task import Task
+        from ..models.chat import Conversation, Message
 
         # Only create tables that don't exist yet
         # This avoids conflicts with Better Auth's user table

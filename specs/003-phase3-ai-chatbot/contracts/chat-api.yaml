@@ -1,0 +1,218 @@
+openapi: 3.0.3
+info:
+  title: Todo AI Chatbot API
+  description: Chat endpoint for AI-powered task management
+  version: 1.0.0
+
+paths:
+  /api/chat:
+    post:
+      summary: Send a chat message and receive AI response
+      description: |
+        Accepts a user message, processes it through the AI agent with task management tools,
+        and returns the assistant response. Creates conversation if none exists for the user.
+        User is identified from JWT token (same auth as /api/tasks).
+      tags:
+        - chat
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChatRequest'
+            examples:
+              createTask:
+                summary: Create a task via natural language
+                value:
+                  message: "Add a task to buy groceries by Friday with high priority"
+              listTasks:
+                summary: List tasks
+                value:
+                  message: "Show all my pending tasks"
+              completeTask:
+                summary: Complete a task
+                value:
+                  message: "Mark the buy groceries task as complete"
+      responses:
+        '200':
+          description: AI response with optional action metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatResponse'
+              examples:
+                taskCreated:
+                  summary: Task creation confirmed
+                  value:
+                    response: "I've created a new task 'Buy groceries' with high priority, due Friday. Is there anything else you'd like to do?"
+                    conversation_id: 1
+                    action: "task_created"
+                    task_id: 42
+                taskListed:
+                  summary: Task list response
+                  value:
+                    response: "Here are your pending tasks:\n1. Buy groceries (High) - Due: Feb 14\n2. Write report (Medium) - No due date"
+                    conversation_id: 1
+                    action: "tasks_listed"
+                    task_id: null
+        '401':
+          description: Missing or invalid JWT token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                detail: "Not authenticated"
+        '422':
+          description: Invalid request body
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                detail: "Message cannot be empty"
+        '503':
+          description: AI service temporarily unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                detail: "AI service temporarily unavailable. Please try again."
+
+  /api/chat/history:
+    get:
+      summary: Get conversation history for the current user
+      description: |
+        Returns the most recent messages from the user's conversation.
+        Used to populate the chat panel when it opens.
+        Returns up to 50 most recent messages by default.
+      tags:
+        - chat
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 50
+            minimum: 1
+            maximum: 200
+          description: Maximum number of messages to return
+      responses:
+        '200':
+          description: Conversation history
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatHistoryResponse'
+        '401':
+          description: Missing or invalid JWT token
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Same JWT token used for /api/tasks endpoints
+
+  schemas:
+    ChatRequest:
+      type: object
+      required:
+        - message
+      properties:
+        message:
+          type: string
+          minLength: 1
+          maxLength: 2000
+          description: User's natural language message
+
+    ChatResponse:
+      type: object
+      required:
+        - response
+        - conversation_id
+      properties:
+        response:
+          type: string
+          description: AI assistant's text response
+        conversation_id:
+          type: integer
+          description: Conversation ID for this chat session
+        action:
+          type: string
+          nullable: true
+          enum:
+            - task_created
+            - task_updated
+            - task_completed
+            - task_uncompleted
+            - task_deleted
+            - tasks_listed
+            - clarification
+            - conversation
+            - error
+          description: >
+            Type of action performed by the AI. Used by frontend to determine
+            if dashboard task list should auto-refresh. Null if no action taken.
+        task_id:
+          type: integer
+          nullable: true
+          description: ID of the affected task (if applicable)
+
+    ChatHistoryResponse:
+      type: object
+      required:
+        - messages
+        - conversation_id
+      properties:
+        messages:
+          type: array
+          items:
+            $ref: '#/components/schemas/MessageRead'
+        conversation_id:
+          type: integer
+          nullable: true
+          description: Conversation ID, null if no conversation exists yet
+        total:
+          type: integer
+          description: Total messages in conversation
+
+    MessageRead:
+      type: object
+      required:
+        - id
+        - role
+        - content
+        - created_at
+      properties:
+        id:
+          type: integer
+        role:
+          type: string
+          enum:
+            - user
+            - assistant
+        content:
+          type: string
+        metadata:
+          type: object
+          nullable: true
+          description: Tool calls and reasoning traces
+        created_at:
+          type: string
+          format: date-time
+
+    ErrorResponse:
+      type: object
+      required:
+        - detail
+      properties:
+        detail:
+          type: string
