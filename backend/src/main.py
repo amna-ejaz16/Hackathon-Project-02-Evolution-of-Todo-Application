@@ -1,5 +1,14 @@
 """FastAPI application entry point."""
 
+# CRITICAL: Disable MCP filesystem BEFORE any imports that use agents
+# This must happen before importing chat_service, which imports agents
+import os
+import warnings
+
+os.environ['MCP_DISABLE_FILESYSTEM'] = '1'
+os.environ['MCP_NO_SERVER'] = '1'
+warnings.filterwarnings('ignore', message='.*Unable to add filesystem.*')
+
 import logging
 from contextlib import asynccontextmanager
 
