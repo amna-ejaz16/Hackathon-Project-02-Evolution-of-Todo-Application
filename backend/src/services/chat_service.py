@@ -348,81 +348,94 @@ Be friendly and natural while staying focused on task management."""
             logger.info(f"[AGENT EXECUTION] Agent execution completed, user_id={user_id}, conversation_id={conversation_id}")
 
             # Step 7: Extract response and metadata
-            # The OpenAI Agents SDK Runner.run() returns a Response object
-            # Access the final message content from the result
+            # The OpenAI Agents SDK Runner.run() returns a RunResult object with new_items containing MessageOutputItem objects
+            # Each MessageOutputItem has raw_item (ResponseOutputMessage) with content field
             assistant_response = "I'm sorry, I couldn't process that request."
 
-            if hasattr(result, 'messages') and result.messages:
-                # Get the last assistant message
-                for msg in reversed(result.messages):
-                    if msg.role == "assistant" and msg.content:
-                        assistant_response = msg.content
-                        logger.info(f"[AGENT EXECUTION] Extracted assistant response, length={len(assistant_response)}, user_id={user_id}")
-                        break
+            if hasattr(result, 'new_items') and result.new_items:
+                # Get the last assistant message from new_items
+                from agents import MessageOutputItem
+
+                for item in reversed(result.new_items):
+                    if isinstance(item, MessageOutputItem):
+                        # Extract content from ResponseOutputMessage
+                        if hasattr(item.raw_item, 'content') and item.raw_item.content:
+                            # item.raw_item.content is a list of content blocks
+                            # Extract text from ResponseOutputText blocks
+                            text_parts = []
+                            for content_block in item.raw_item.content:
+                                if hasattr(content_block, 'text'):
+                                    text_parts.append(content_block.text)
+                            if text_parts:
+                                assistant_response = "\n".join(text_parts)
+                                logger.info(f"[AGENT EXECUTION] Extracted assistant response from new_items, length={len(assistant_response)}, user_id={user_id}")
+                                break
             elif isinstance(result, dict):
                 # Fallback for dict-like response
                 assistant_response = result.get("response", assistant_response)
                 logger.warning(f"[AGENT EXECUTION] Agent result was dict-like (unexpected format), user_id={user_id}")
             else:
-                logger.warning(f"[AGENT EXECUTION] Could not extract assistant response from result, user_id={user_id}, result_type={type(result)}")
+                logger.warning(f"[AGENT EXECUTION] Could not extract assistant response from result, user_id={user_id}, result_type={type(result)}, has_new_items={hasattr(result, 'new_items')}")
 
             # T025: Parse tool calls from agent result to determine action type
             action = "conversation"  # Default action
             task_id = None
             tool_calls_metadata = []
 
-            # Extract tool calls from result messages
-            if hasattr(result, 'messages'):
-                for msg in result.messages:
-                    if msg.role == "assistant" and hasattr(msg, 'tool_calls') and msg.tool_calls:
-                        for tool_call in msg.tool_calls:
-                            tool_name = tool_call.function.name if hasattr(tool_call.function, 'name') else ""
-                            tool_args_str = tool_call.function.arguments if hasattr(tool_call.function, 'arguments') else ""
+            # Extract tool calls from result new_items
+            if hasattr(result, 'new_items') and result.new_items:
+                from agents import ToolCallItem, ToolCallOutputItem
 
-                            # Parse arguments to extract task_id if present
-                            tool_args = {}
-                            try:
-                                tool_args = json.loads(tool_args_str) if tool_args_str else {}
-                            except json.JSONDecodeError:
-                                logger.warning(f"[TOOL CALL TRACKING] Failed to parse tool arguments for tool={tool_name}, user_id={user_id}, args_str={tool_args_str[:100]}")
+                for item in result.new_items:
+                    # Handle ToolCallItem (the tool call itself)
+                    if isinstance(item, ToolCallItem):
+                        tool_name = item.raw_item.function.name if hasattr(item.raw_item.function, 'name') else ""
+                        tool_args_str = item.raw_item.function.arguments if hasattr(item.raw_item.function, 'arguments') else ""
 
-                            # Log tool call details
-                            logger.info(f"[TOOL CALL TRACKING] AI tool call: tool={tool_name}, arguments={tool_args}, user_id={user_id}, conversation_id={conversation_id}")
+                        # Parse arguments to extract task_id if present
+                        tool_args = {}
+                        try:
+                            tool_args = json.loads(tool_args_str) if tool_args_str else {}
+                        except json.JSONDecodeError:
+                            logger.warning(f"[TOOL CALL TRACKING] Failed to parse tool arguments for tool={tool_name}, user_id={user_id}, args_str={tool_args_str[:100]}")
 
-                            # Store tool call for metadata
-                            tool_calls_metadata.append({
-                                "name": tool_name,
-                                "arguments": tool_args
-                            })
+                        # Log tool call details
+                        logger.info(f"[TOOL CALL TRACKING] AI tool call: tool={tool_name}, arguments={tool_args}, user_id={user_id}, conversation_id={conversation_id}")
 
-                            # T025: Map tool calls to action types based on contract/chat-api.yaml
-                            # Priority given to task modification actions over list operations
-                            if tool_name == "add_task" and action == "conversation":
-                                action = "task_created"
-                                logger.info(f"[ACTION DETECTION] Detected action=task_created, title={tool_args.get('title')}, priority={tool_args.get('priority')}, user_id={user_id}")
-                                # Extract task_id from the returned task object if available
-                                # Note: The tool returns a string, but we'd need to parse it
-                                # For now, we'll rely on the frontend refetching the task list
-                            elif tool_name == "update_task" and action not in ["task_created", "task_deleted"]:
-                                action = "task_updated"
-                                task_id = tool_args.get("task_id")
-                                logger.info(f"[ACTION DETECTION] Detected action=task_updated, task_id={task_id}, fields={list(tool_args.keys())}, user_id={user_id}")
-                            elif tool_name == "complete_task" and action not in ["task_created", "task_updated", "task_deleted"]:
-                                action = "task_completed"
-                                task_id = tool_args.get("task_id")
-                                logger.info(f"[ACTION DETECTION] Detected action=task_completed, task_id={task_id}, user_id={user_id}")
-                            elif tool_name == "uncomplete_task" and action not in ["task_created", "task_updated", "task_deleted"]:
-                                action = "task_uncompleted"
-                                task_id = tool_args.get("task_id")
-                                logger.info(f"[ACTION DETECTION] Detected action=task_uncompleted, task_id={task_id}, user_id={user_id}")
-                            elif tool_name == "delete_task" and action not in ["task_created", "task_updated"]:
-                                action = "task_deleted"
-                                task_id = tool_args.get("task_id")
-                                logger.info(f"[ACTION DETECTION] Detected action=task_deleted, task_id={task_id}, user_id={user_id}")
-                            elif tool_name == "list_tasks" and action == "conversation":
-                                action = "tasks_listed"
-                                filters = {k: v for k, v in tool_args.items() if v is not None}
-                                logger.info(f"[ACTION DETECTION] Detected action=tasks_listed, filters={filters}, user_id={user_id}")
+                        # Store tool call for metadata
+                        tool_calls_metadata.append({
+                            "name": tool_name,
+                            "arguments": tool_args
+                        })
+
+                        # T025: Map tool calls to action types based on contract/chat-api.yaml
+                        # Priority given to task modification actions over list operations
+                        if tool_name == "add_task" and action == "conversation":
+                            action = "task_created"
+                            logger.info(f"[ACTION DETECTION] Detected action=task_created, title={tool_args.get('title')}, priority={tool_args.get('priority')}, user_id={user_id}")
+                            # Extract task_id from the returned task object if available
+                            # Note: The tool returns a string, but we'd need to parse it
+                            # For now, we'll rely on the frontend refetching the task list
+                        elif tool_name == "update_task" and action not in ["task_created", "task_deleted"]:
+                            action = "task_updated"
+                            task_id = tool_args.get("task_id")
+                            logger.info(f"[ACTION DETECTION] Detected action=task_updated, task_id={task_id}, fields={list(tool_args.keys())}, user_id={user_id}")
+                        elif tool_name == "complete_task" and action not in ["task_created", "task_updated", "task_deleted"]:
+                            action = "task_completed"
+                            task_id = tool_args.get("task_id")
+                            logger.info(f"[ACTION DETECTION] Detected action=task_completed, task_id={task_id}, user_id={user_id}")
+                        elif tool_name == "uncomplete_task" and action not in ["task_created", "task_updated", "task_deleted"]:
+                            action = "task_uncompleted"
+                            task_id = tool_args.get("task_id")
+                            logger.info(f"[ACTION DETECTION] Detected action=task_uncompleted, task_id={task_id}, user_id={user_id}")
+                        elif tool_name == "delete_task" and action not in ["task_created", "task_updated"]:
+                            action = "task_deleted"
+                            task_id = tool_args.get("task_id")
+                            logger.info(f"[ACTION DETECTION] Detected action=task_deleted, task_id={task_id}, user_id={user_id}")
+                        elif tool_name == "list_tasks" and action == "conversation":
+                            action = "tasks_listed"
+                            filters = {k: v for k, v in tool_args.items() if v is not None}
+                            logger.info(f"[ACTION DETECTION] Detected action=tasks_listed, filters={filters}, user_id={user_id}")
 
             # Log summary of action detection
             if tool_calls_metadata:
