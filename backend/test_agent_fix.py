@@ -66,12 +66,12 @@ async def test_runner_result_structure():
             content = f.read()
 
         checks = [
-            ('from agents import MessageOutputItem', 'Message extraction import'),
-            ('from agents import ToolCallItem, ToolCallOutputItem', 'Tool extraction import'),
+            ('from agents import Agent, Runner, MessageOutputItem, ToolCallItem, ToolCallOutputItem', 'Imports at module level'),
             ('if isinstance(item, MessageOutputItem)', 'Message type check'),
             ('if isinstance(item, ToolCallItem)', 'Tool type check'),
             ('result.new_items', 'Using new_items instead of messages'),
             ('item.raw_item.content', 'Correct content access path'),
+            ('MCP_DISABLE_FILESYSTEM', 'MCP filesystem disabled'),
         ]
 
         all_found = True
