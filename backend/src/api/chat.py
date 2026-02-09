@@ -61,8 +61,8 @@ async def send_message(
             f"User {current_user.user_id} sent message: {request.message[:100]}..."
         )
 
-        # Process message through AI agent
-        response = ChatService.process_message(
+        # Process message through AI agent (async)
+        response = await ChatService.process_message(
             user_message=request.message,
             user_id=current_user.user_id,
             session=session,

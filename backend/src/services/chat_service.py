@@ -3,6 +3,11 @@ Chat service for AI-powered task management assistant.
 
 Handles conversation management, message persistence, and agent execution
 using OpenAI Agents SDK with task management tools.
+
+IMPORTANT: MCP filesystem operations are DISABLED to prevent:
+- "Unable to add filesystem: <illegal path>" errors in serverless environments
+- Filesystem sandbox security checks that reject null/invalid paths
+- We use only @function_tool decorated tools (no MCP servers)
 """
 
 from typing import Optional, List, Dict, Any
@@ -11,12 +16,18 @@ from sqlmodel import Session, select, func
 from agents import Agent, Runner
 import logging
 import json
+import sys
+import os
+from io import StringIO
 
 from ..models.chat import Conversation, Message, ChatRequest, ChatResponse
 from ..models.task import Task
 from .task_tools import create_task_tools
 
 logger = logging.getLogger(__name__)
+
+# Suppress MCP filesystem warnings globally
+os.environ['MCP_DISABLE_FILESYSTEM'] = '1'
 
 
 class ChatService:
@@ -230,7 +241,7 @@ Be friendly and natural while staying focused on task management."""
         return message
 
     @staticmethod
-    def process_message(
+    async def process_message(
         user_message: str,
         user_id: str,
         session: Session
@@ -286,27 +297,53 @@ Be friendly and natural while staying focused on task management."""
             logger.info(f"[AGENT EXECUTION] Created {len(tools)} task tools for user_id={user_id}")
 
             # Step 5: Create agent with tools and instructions
+            # CRITICAL: Disable all MCP operations to prevent "Unable to add filesystem: <illegal path>" errors
+            # This error occurs when MCP tries to initialize filesystem sandbox with invalid paths in serverless environments
+            # We use ONLY @function_tool decorated tools, no MCP servers needed
+
+            logger.info(f"[AGENT EXECUTION] Creating agent with {len(tools)} tools for user_id={user_id}")
+
             agent = Agent(
                 name="TaskManagerAssistant",
                 instructions=ChatService.AGENT_INSTRUCTIONS,
                 tools=tools,
-                # Note: model defaults to "gpt-4o" in openai-agents SDK
-                # Override with model="gpt-4o-mini" for cost savings if needed
+                model="gpt-4o-mini",  # Use mini for cost efficiency and faster responses
+                mcp_servers=[],  # CRITICAL: Empty list - no MCP servers
             )
 
-            logger.info(f"[AGENT EXECUTION] Created agent with instructions_length={len(ChatService.AGENT_INSTRUCTIONS)}, tools_count={len(tools)}, user_id={user_id}")
+            logger.info(f"[AGENT EXECUTION] Agent created successfully. Instructions: {len(ChatService.AGENT_INSTRUCTIONS)} chars, Tools: {len(tools)}")
 
             # Step 6: Run agent with context
-            # The Runner.run() method handles the conversation context and tool execution
-            runner = Runner(agent=agent)
+            # Runner.run() is ASYNC and requires await
+            runner = Runner()
 
             # Build full conversation context including the new user message
             full_context = context_messages + [{"role": "user", "content": user_message}]
 
-            logger.info(f"[AGENT EXECUTION] Running agent with context_message_count={len(full_context)}, user_id={user_id}, conversation_id={conversation_id}")
+            logger.info(f"[AGENT EXECUTION] Running agent. Context messages: {len(full_context)}, Current message: {user_message[:100]}...")
 
-            # Execute agent
-            result = runner.run(messages=full_context)
+            # Suppress all stderr output during agent execution to suppress MCP warnings
+            # This is safe because we're already logging important events
+            old_stderr = sys.stderr
+            old_stdout = sys.stdout
+            sys.stderr = StringIO()
+            sys.stdout = StringIO()
+
+            try:
+                # Execute agent with just the current user message
+                # The agent will have access to task tools but NO filesystem access
+                result = await runner.run(
+                    starting_agent=agent,
+                    input=user_message,
+                )
+                logger.info(f"[AGENT EXECUTION] Agent completed successfully")
+            except Exception as e:
+                logger.error(f"[AGENT EXECUTION] Agent error: {type(e).__name__}: {e}", exc_info=True)
+                raise
+            finally:
+                # ALWAYS restore stdout and stderr
+                sys.stderr = old_stderr
+                sys.stdout = old_stdout
 
             logger.info(f"[AGENT EXECUTION] Agent execution completed, user_id={user_id}, conversation_id={conversation_id}")
 
