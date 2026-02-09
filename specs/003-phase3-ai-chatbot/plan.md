@@ -1,44 +1,81 @@
-# Implementation Plan: Todo AI Chatbot - Cyberpunk UI/UX
+# Implementation Plan: Todo AI Chatbot with MCP Server Integration
 
-**Branch**: `003-phase3-ai-chatbot` | **Date**: 2026-02-08 | **Spec**: [spec.md](./spec.md)
+**Branch**: `003-phase3-ai-chatbot` | **Date**: 2026-02-09 | **Spec**: [spec.md](./spec.md)
 **Input**: Feature specification from `/specs/003-phase3-ai-chatbot/spec.md`
+
+**Phases**: This plan covers Phase 0 (Research), Phase 1 (Design & Contracts), and will be followed by Phase 2 (Tasks Generation).
 
 ## Summary
 
-Add an AI-powered floating chat widget to the existing dashboard that enables users to manage tasks via natural language. The backend uses OpenAI Agents SDK with `@function_tool` decorators wrapping existing task CRUD operations. The frontend is a cyberpunk-themed chat panel built with React + Framer Motion + Tailwind CSS. Conversations are persisted in Neon PostgreSQL with a 200-message cap and 20-message AI context window.
+**Primary Requirement**: Build an AI-powered conversational Todo chatbot using MCP (Model Context Protocol) server architecture while preserving all existing chat widget functionality. The feature adds an MCP server that exposes task operations as stateless tools via the Official MCP SDK, enabling external integration while maintaining bi-directional data consistency with the existing REST API.
+
+**Technical Approach**:
+1. **Phase 0 (Research)**: Validate MCP SDK integration patterns, confirm JWT/database sharing architecture, research Official MCP SDK best practices
+2. **Phase 1 (Design)**: Define data model for MCP operations, create REST-based contracts for MCP tools (as internal endpoints), design authentication layer
+3. **Key Architecture Decisions**:
+   - MCP server runs on same FastAPI backend (not separate microservice)
+   - Reuse existing SQLModel ORM and JWT authentication
+   - Stateless tool design (all context in request parameters)
+   - Bi-directional consistency between REST and MCP operations
+   - Official MCP SDK for protocol compliance
 
 ## Technical Context
 
-**Language/Version**: Python 3.11+ (backend), TypeScript/Node.js 20+ (frontend)
-**Primary Dependencies**: OpenAI Agents SDK `openai-agents>=0.8.0` (backend), Framer Motion (frontend, existing)
-**Storage**: Neon PostgreSQL (existing) — new tables: `conversation`, `message`
-**Testing**: pytest (backend), manual + visual (frontend)
-**Target Platform**: Web (Next.js 15+ frontend, FastAPI backend on Linux)
-**Project Type**: Web application (monorepo with `frontend/` + `backend/`)
-**Performance Goals**: AI response <5s, animations 60fps, chat open <500ms
-**Constraints**: Existing backend endpoints (tasks, auth) MUST NOT be modified (NFR-006)
-**Scale/Scope**: Single-user conversations, 200 messages max, ~10 new files
+**Language/Version**: Python 3.11+ (backend), TypeScript/Node 20+ (frontend)
+**Primary Dependencies**:
+  - Backend: FastAPI, SQLModel, Pydantic, python-jose (JWT), openai-agents (0.8.1+), mcp (Official SDK)
+  - Frontend: Next.js 16+, Framer Motion, axios/fetch API
+**Storage**: Neon PostgreSQL (serverless, existing for Phase 2+)
+**Testing**: pytest (backend), Jest (frontend), integration tests for MCP client
+**Target Platform**: Linux server (backend), modern web browsers (frontend)
+**Project Type**: Web application (frontend + backend with new MCP layer)
+**Performance Goals**:
+  - AI response: < 5 seconds for chat messages
+  - MCP tool calls: < 2 seconds per operation
+  - Tool discovery: < 500ms (tools/list endpoint)
+  - Chat panel: 60fps animations
+**Constraints**:
+  - JWT token < 5KB (existing pattern)
+  - Conversation history: max 200 messages per user (auto-prune oldest)
+  - AI context window: last 20 messages (sliding window)
+  - Concurrent MCP connections: ≥ 10 without resource leaks
+**Scale/Scope**:
+  - 5 MCP tools (add_task, list_tasks, complete_task, delete_task, update_task)
+  - 1 active conversation per user
+  - Task operations: create, read, update, delete, complete via both REST and MCP
+  - ~2-3 new backend endpoints for MCP integration
+  - No frontend changes needed (MCP is server-side protocol)
 
 ## Constitution Check
 
 *GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
 
-| Principle | Status | Evidence |
-|-----------|--------|----------|
-| I. Specification First | PASS | Spec created and clarified before planning |
-| II. Deterministic Behavior | PASS | AI constrained to predefined intents/tools (FR-018); same tool call → same DB operation |
-| III. Incremental Evolution | PASS | Builds on Phase 2 verified outcomes; existing code untouched (NFR-006) |
-| IV. Separation of Concerns | PASS | AI logic (services/), API layer (api/chat.py), UI components (components/chat/) all separated |
-| V. Testability | PASS | Tool functions testable independently; API endpoint testable with pytest; UI testable visually |
-| VI. Observability | PASS | FR-017 requires all AI decisions logged with reasoning traces |
-| VII. AI Constraint & Explainability | PASS | FR-018 constrains to task intents only; metadata stores tool calls and reasoning |
-| VIII. Simplicity & YAGNI | PASS | Single chat endpoint, callback for refresh (no global state), no MCP server overhead |
+### Principles Validation
 
-**Phase III Standards Check**:
-- Technology: OpenAI Agents SDK (matches constitution "Agents SDK") ✓
-- AI Constraints: `@function_tool` + agent instructions enforce bounded operations ✓
-- Safety: Agent instructions explicitly prohibit non-task actions ✓
-- Explainability: Message metadata stores tool_calls and reasoning traces ✓
+| Principle | Requirement | Status | Notes |
+|-----------|-------------|--------|-------|
+| **I. Specification First** | Complete spec before implementation | ✅ PASS | Spec.md complete with 42 FRs, 20 SCs, 10 user stories |
+| **II. Deterministic Behavior** | Same input → same output; predictable system | ✅ PASS | MCP tools are stateless; JWT auth determines output; database is ACID |
+| **III. Incremental Evolution** | Build on verified Phase 2 outcomes | ✅ PASS | Phase 2 (fullstack) complete; Phase 3 adds chat + MCP on top |
+| **IV. Separation of Concerns** | Layers independently testable & replaceable | ✅ PASS | Chat widget, AI agent, MCP tools, REST API all independent |
+| **V. Testability (NON-NEGOTIABLE)** | All features verifiable via deterministic tests | ⚠️ NEEDS PLAN | Test-first approach for MCP tools required; contract tests for tool invocations |
+| **VI. Observability** | Structured logs, metrics, tracing at every phase | ✅ PASS | Error logging fixed (Phase 3 frontend); MCP logging spec'd (FR-MCP-015) |
+| **VII. AI Constraint & Explainability** | AI responses follow predefined intents; explainable | ✅ PASS | OpenAI Agents SDK + MCP both bound to predefined task operations only |
+| **VIII. Simplicity & YAGNI** | No speculative features; justify complexity | ✅ PASS | MCP is justified by spec requirements; stateless design is simple |
+
+**GATE RESULT**: ✅ PASS (with testability plan required in Phase 2 tasks)
+
+### Phase III Constraints
+
+| Constraint | Status | Detail |
+|-----------|--------|--------|
+| **Technology Stack** | ✅ OK | OpenAI ChatKit, Agents SDK, Official MCP SDK (per constitution) |
+| **AI Constraint** | ✅ OK | AI responses follow 5 predefined task operations only (FR-MCP-002 to FR-MCP-006) |
+| **Safety** | ✅ OK | No hallucinated actions outside defined Todo operations (spec validates this) |
+| **Explainability** | ✅ OK | All AI decisions logged with reasoning traces (FR-MCP-015, chat logging complete) |
+| **No Breaking Changes** | ✅ OK | Existing REST API unchanged; chat widget preserved; backward compatible |
+
+**CONSTITUTION COMPLIANCE**: ✅ APPROVED
 
 ## Project Structure
 
@@ -46,203 +83,330 @@ Add an AI-powered floating chat widget to the existing dashboard that enables us
 
 ```text
 specs/003-phase3-ai-chatbot/
-├── plan.md              # This file
-├── research.md          # Phase 0: Technology research
-├── data-model.md        # Phase 1: Conversation + Message entities
-├── quickstart.md        # Phase 1: Developer setup guide
-├── contracts/
-│   └── chat-api.yaml    # Phase 1: OpenAPI contract for chat endpoints
-└── tasks.md             # Phase 2 output (/sp.tasks command)
+├── plan.md              # This file (implementation architecture)
+├── research.md          # Phase 0 output (TBD via /sp.plan Phase 0)
+├── spec.md              # Feature specification (COMPLETE)
+├── data-model.md        # Phase 1 output (TBD via /sp.plan Phase 1)
+├── quickstart.md        # Phase 1 output (TBD via /sp.plan Phase 1)
+├── checklists/
+│   └── requirements.md   # Specification quality checklist (COMPLETE)
+└── contracts/           # Phase 1 output (TBD via /sp.plan Phase 1)
+    ├── mcp-tools.openapi.yaml       # MCP tools as internal endpoints
+    ├── chat-api.openapi.yaml        # Chat API (existing, preserved)
+    └── authentication.yaml          # JWT validation layer (shared)
 ```
 
 ### Source Code (repository root)
 
 ```text
+# Web application structure (existing from Phase 2, with MCP additions)
+
 backend/
 ├── src/
-│   ├── api/
-│   │   ├── chat.py              # NEW: POST /api/chat, GET /api/chat/history
-│   │   ├── tasks.py             # EXISTING (unchanged)
-│   │   ├── health.py            # EXISTING (unchanged)
-│   │   └── deps.py              # EXISTING (unchanged)
 │   ├── models/
-│   │   ├── chat.py              # NEW: Conversation, Message, ChatRequest, ChatResponse
-│   │   ├── task.py              # EXISTING (unchanged)
-│   │   └── user.py              # EXISTING (unchanged)
+│   │   ├── chat.py              # Chat models (COMPLETE - fixed metadata issue)
+│   │   ├── task.py              # Task models (existing)
+│   │   └── user.py              # User models (existing)
+│   │
 │   ├── services/
-│   │   ├── chat_service.py      # NEW: Agent setup, message processing, history management
-│   │   └── task_tools.py        # NEW: @function_tool wrappers for task CRUD
-│   ├── core/
-│   │   ├── config.py            # MODIFIED: add OPENAI_API_KEY setting
-│   │   ├── database.py          # EXISTING (auto-creates new tables)
-│   │   └── security.py          # EXISTING (unchanged)
-│   └── main.py                  # MODIFIED: register chat router
-└── requirements.txt             # MODIFIED: add openai-agents, openai
+│   │   ├── chat_service.py      # Chat AI orchestration (EXISTING - FIXED)
+│   │   ├── task_tools.py        # AI tools for task operations (EXISTING - 6 tools)
+│   │   └── mcp_service.py       # NEW: MCP server integration
+│   │
+│   ├── api/
+│   │   ├── chat.py              # Chat endpoints (EXISTING)
+│   │   ├── tasks.py             # Task endpoints (EXISTING)
+│   │   └── mcp.py               # NEW: MCP transport & tool routing
+│   │
+│   └── middleware/
+│       └── auth.py              # JWT validation (EXISTING, reused)
+│
+└── tests/
+    ├── unit/
+    │   ├── test_mcp_tools.py     # NEW: MCP tool unit tests
+    │   └── test_task_ops.py      # Existing task operation tests
+    │
+    ├── integration/
+    │   ├── test_mcp_client.py    # NEW: MCP client integration tests
+    │   ├── test_chat_api.py      # Existing chat API tests
+    │   └── test_rest_mcp_consistency.py  # NEW: Bi-directional consistency
+    │
+    └── contract/
+        └── test_mcp_contracts.py # NEW: MCP tool contract tests
 
 frontend/
 ├── src/
 │   ├── components/
-│   │   └── chat/                # NEW: All chat UI components
-│   │       ├── ChatWidget.tsx
-│   │       ├── ChatHeader.tsx
-│   │       ├── ChatMessages.tsx
-│   │       ├── ChatMessage.tsx
-│   │       ├── ChatInput.tsx
-│   │       ├── TypingIndicator.tsx
-│   │       └── QuickActionPills.tsx
-│   ├── app/
-│   │   └── dashboard/
-│   │       └── DashboardClient.tsx  # MODIFIED: embed ChatWidget with onTaskChange callback
-│   └── lib/
-│       └── api.ts               # EXISTING (unchanged — chat uses same apiFetch)
-└── package.json                 # EXISTING (no new dependencies)
+│   │   ├── chat/
+│   │   │   ├── ChatWidget.tsx       # Chat panel (EXISTING - error logging fixed)
+│   │   │   ├── ChatHeader.tsx       # (existing)
+│   │   │   ├── ChatMessages.tsx     # (existing)
+│   │   │   ├── ChatInput.tsx        # (existing)
+│   │   │   └── QuickActionPills.tsx # (existing)
+│   │   └── ...
+│   │
+│   ├── lib/
+│   │   ├── errorLogger.ts       # Error logging utility (NEW - complete)
+│   │   ├── api.ts               # API client (EXISTING)
+│   │   └── auth.ts              # Auth utilities (EXISTING)
+│   │
+│   └── pages/
+│       └── dashboard.tsx         # Dashboard host (EXISTING)
+│
+└── tests/
+    └── chat/
+        └── integration/          # Chat widget integration tests (EXISTING)
 ```
 
-**Structure Decision**: Web application pattern (Option 2). New files added to existing `backend/src/` and `frontend/src/` directories. No new top-level directories. Chat components organized under `frontend/src/components/chat/` following component colocation pattern.
-
-## Implementation Phases
-
-### Phase A: Backend — Models & Database (Foundation)
-
-**Files**: `backend/src/models/chat.py`
-
-1. Create `Conversation` SQLModel (table=True) with fields: id, user_id, title, created_at, updated_at
-2. Create `Message` SQLModel (table=True) with fields: id, conversation_id, role, content, metadata, created_at
-3. Create Pydantic schemas: `ChatRequest`, `ChatResponse`, `ChatHistoryResponse`, `MessageRead`
-4. Tables auto-created by existing `create_db_and_tables()` — import models in `database.py`
-
-**Dependencies**: None (foundational)
-
-### Phase B: Backend — Task Tool Functions
-
-**Files**: `backend/src/services/task_tools.py`
-
-1. Define `@function_tool` for each task operation:
-   - `add_task(title, description, priority, category, due_date)` → calls existing `Task` model + session
-   - `list_tasks(status, priority, category)` → queries tasks table
-   - `complete_task(task_id)` → sets `completed=True`
-   - `delete_task(task_id)` → removes task
-   - `update_task(task_id, title, description, priority, category, due_date)` → partial update
-2. Each tool receives `user_id` via function context/closure (scoped per request)
-3. Each tool returns a string description of what happened (for AI to relay to user)
-
-**Dependencies**: Phase A (models)
-
-### Phase C: Backend — Chat Service (Agent Orchestration)
-
-**Files**: `backend/src/services/chat_service.py`, `backend/src/core/config.py`
-
-1. Add `OPENAI_API_KEY` to `Settings` in config.py
-2. Create `ChatService` class:
-   - `get_or_create_conversation(user_id, session)` → returns Conversation
-   - `get_context_messages(conversation_id, session, limit=20)` → last 20 messages
-   - `store_message(conversation_id, role, content, metadata, session)` → saves + prunes if >200
-   - `process_message(user_message, user_id, session)` → full flow:
-     - Get/create conversation
-     - Store user message
-     - Fetch context (last 20)
-     - Create Agent with task tools (user_id bound)
-     - Run agent via `Runner.run()`
-     - Store assistant response with metadata
-     - Return ChatResponse with action type
-
-**Dependencies**: Phase A (models), Phase B (tools)
-
-### Phase D: Backend — Chat API Endpoint
-
-**Files**: `backend/src/api/chat.py`, `backend/src/main.py`
-
-1. Create `POST /api/chat` endpoint:
-   - Auth: `get_current_user` dependency (existing)
-   - Input: `ChatRequest` (message string)
-   - Process: call `ChatService.process_message()`
-   - Output: `ChatResponse` (response, conversation_id, action, task_id)
-   - Error handling: 503 for AI service errors, 422 for validation
-2. Create `GET /api/chat/history` endpoint:
-   - Auth: `get_current_user` dependency
-   - Query param: `limit` (default 50)
-   - Returns: `ChatHistoryResponse` (messages array, conversation_id)
-3. Register chat router in `main.py` at prefix `/api/chat`
-4. Add CORS — no changes needed (existing wildcard methods)
-
-**Dependencies**: Phase C (chat service)
-
-### Phase E: Frontend — Chat UI Components
-
-**Files**: `frontend/src/components/chat/*.tsx`
-
-1. `ChatWidget.tsx`: FAB button + panel container
-   - State: `isOpen` boolean
-   - FAB: fixed bottom-right, neon gradient, hover lift animation
-   - Panel: conditional render, slide animation (desktop: side panel, mobile: bottom sheet)
-   - Props: `onTaskChange: () => void` callback
-2. `ChatHeader.tsx`: AI avatar icon, "Task Manager Assistant" title, close button, gradient strip
-3. `ChatMessages.tsx`: Scrollable container, auto-scroll to bottom on new messages, ref-based scroll
-4. `ChatMessage.tsx`: User bubble (right, neon) vs assistant bubble (left, glass), fade+slide entrance
-5. `ChatInput.tsx`: Dark glass input, neon focus ring, gradient send button, Enter to submit, disabled when sending
-6. `TypingIndicator.tsx`: Three pulsing dots with staggered animation
-7. `QuickActionPills.tsx`: Static pills ("Show all tasks", "Add a task", "What's overdue?"), neon glow, hover lift
-
-**Dependencies**: None (can be built with mock data in parallel with backend)
-
-### Phase F: Frontend — Chat API Integration & Dashboard Wiring
-
-**Files**: `frontend/src/components/chat/ChatWidget.tsx`, `frontend/src/app/dashboard/DashboardClient.tsx`
-
-1. Wire `ChatWidget` to backend API:
-   - `POST /api/chat` via existing `api.post()` (sends JWT automatically)
-   - `GET /api/chat/history` via `api.get()` on panel open
-   - Handle loading states, errors, typing indicator
-2. Implement message state management inside `ChatWidget`:
-   - `messages[]` state array
-   - `isSending` boolean for typing indicator
-   - Load history on first open
-   - Append user message → show indicator → append AI response
-3. Auto-refresh dashboard: check `action` field in `ChatResponse`
-   - If action is `task_created`, `task_updated`, `task_completed`, `task_uncompleted`, `task_deleted` → call `onTaskChange()`
-4. Embed `ChatWidget` in `DashboardClient`:
-   - Pass `onTaskChange={fetchTasks}` as callback
-   - Render at end of component (portal or absolute positioned)
-
-**Dependencies**: Phase D (backend API), Phase E (UI components)
-
-### Phase G: Responsive Design & Polish
-
-1. Mobile bottom-sheet behavior (< 768px):
-   - Full-width panel, swipe-down gesture to dismiss (Framer Motion drag)
-   - Touch-friendly input sizing
-2. Desktop side-panel:
-   - 380px width, 560px height, fixed bottom-right positioning
-   - Shadow and border glow effects
-3. Welcome message on first open (no conversation history)
-4. Error states in chat (AI unavailable, network error)
-5. Glassmorphism consistency: match existing `glass-strong`, `card-dark`, `card-glow` classes
-
-**Dependencies**: Phase E, Phase F
-
-## Key Design Decisions
-
-| Decision | Choice | Rationale |
-|----------|--------|-----------|
-| AI Framework | OpenAI Agents SDK (`@function_tool`) | Built-in tool calling loop, no manual orchestration needed |
-| MCP Server | Not used (deferred) | `@function_tool` is simpler and sufficient; MCP adds inter-process overhead |
-| Chat API | Single `POST /api/chat` | Minimal API surface; agent handles all tool routing internally |
-| Conversation Storage | SQLModel tables in Neon PostgreSQL | Reuses existing DB; consistent with Phase 2 patterns |
-| Dashboard Refresh | Callback prop (`onTaskChange`) | Simplest pattern; no global state library needed |
-| Frontend Chat UI | Custom components (no ChatKit) | Full control over cyberpunk theme; ChatKit is not an installable library |
-| Context Window | Last 20 messages | Balances dialogue coherence with API cost/speed |
-| Message Cap | 200 per conversation | Bounds storage; oldest pruned automatically |
+**Structure Decision**:
+- **Option 2 (Web Application)** - Existing backend/frontend split maintained
+- **MCP as Backend Service Layer**: MCP server is NOT a separate microservice but a new service layer within the existing FastAPI backend
+- **New Files (Backend)**:
+  - `src/services/mcp_service.py` - Core MCP tool implementations
+  - `src/api/mcp.py` - MCP transport layer (WebSocket/HTTP)
+  - `tests/integration/test_mcp_client.py` - Client integration tests
+  - `tests/integration/test_rest_mcp_consistency.py` - Data consistency tests
+  - `tests/unit/test_mcp_tools.py` - Tool unit tests
+  - `tests/contract/test_mcp_contracts.py` - Contract tests
+- **New Files (Contracts)**:
+  - `specs/003-phase3-ai-chatbot/contracts/mcp-tools.openapi.yaml` - Internal tool endpoints
+  - `specs/003-phase3-ai-chatbot/contracts/authentication.yaml` - JWT validation (shared)
+- **Modified Files**:
+  - `backend/src/services/chat_service.py` - Already fixed, no additional changes
+  - `backend/src/models/chat.py` - Already fixed for metadata issue
+- **Frontend**: No changes needed (MCP is server-side only)
 
 ## Complexity Tracking
 
-No constitution violations. All complexity is justified by spec requirements.
+> No Constitution Check violations. All complexity is justified by specification requirements and Principle VIII (Simplicity & YAGNI).
+
+| Design Choice | Why Needed | Simpler Alternative Rejected Because |
+|---------------|-----------|-------------------------------------|
+| MCP Server on same backend | Unified auth + database | Separate microservice adds deployment complexity without benefit for MVP |
+| Stateless tool design | Concurrent connection handling | Stateful approach requires session management and recovery logic |
+| 5 separate MCP tools | Spec-driven requirement (FR-MCP-002 to FR-MCP-006) | Single generic tool would lose semantic meaning |
+| Bi-directional consistency | Spec requirement (SC-MCP-006, SC-MCP-007) | Eventual consistency would require eventual-consistency infrastructure |
+
+---
+
+## Architecture Overview
+
+### Layer 1: Authentication (Shared)
+
+**Existing JWT Validation** (from Phase 2, reused):
+- Token issued by Better Auth
+- Validated by middleware in both REST and MCP
+- Contains user ID + email
+- Expires per configured duration
+- No changes needed - MCP reuses this layer
+
+**MCP Authentication Gate** (NEW):
+```
+MCP Client connects → Provides JWT token in request headers
+→ JWT Middleware validates token
+→ Token decoded to extract user_id
+→ All subsequent tool calls scoped to user_id
+```
+
+### Layer 2: MCP Tools (NEW)
+
+**MCP Tool Service** (`src/services/mcp_service.py`):
+```
+MCP Tool Call (tool_name, parameters, user_id from JWT)
+→ Route to corresponding tool handler
+→ Each tool validates inputs (Pydantic models)
+→ Each tool operates on database (SQLModel ORM)
+→ Each tool returns structured response
+→ Each tool invocation logged (FR-MCP-015)
+```
+
+**5 Tools Implemented**:
+1. **add_task**(user_id, title, description, priority, category, due_date)
+   - Creates task in database
+   - Returns created task with ID
+   - Validates inputs (title required, priority enum, etc.)
+
+2. **list_tasks**(user_id, status, priority, category, page, page_size)
+   - Queries database with filters
+   - Returns paginated results
+   - Applies user scoping (WHERE user_id = ?)
+
+3. **complete_task**(user_id, task_id)
+   - Marks task as complete
+   - Returns updated task
+   - Validates task ownership (task.user_id == user_id)
+
+4. **delete_task**(user_id, task_id)
+   - Deletes task from database
+   - Returns confirmation
+   - Validates task ownership
+
+5. **update_task**(user_id, task_id, title, description, priority, category, due_date, status)
+   - Updates only provided fields
+   - Returns updated task
+   - Validates task ownership
+
+**Design Pattern**:
+- Each tool is a pure function: (inputs, user_id) → result
+- No side effects beyond database writes
+- All database writes use SQLModel ORM (existing)
+- All operations immediately consistent (ACID transactions)
+
+### Layer 3: MCP Transport (NEW)
+
+**MCP Server** (`src/api/mcp.py`):
+```
+FastAPI MCP endpoint (WebSocket or HTTP)
+→ Official MCP SDK handles protocol negotiation
+→ SDK calls tool methods from mcp_service.py
+→ SDK returns responses to client
+→ No business logic in transport layer
+```
+
+**Official MCP SDK Usage**:
+- Use `@MCP.tool` decorator or equivalent Official SDK pattern
+- Handles tools/list discovery endpoint
+- Handles tool invocation routing
+- Returns structured errors per MCP spec
+- Supports WebSocket transport (primary) + HTTP fallback
+
+**No Custom Protocol Implementation** - Official SDK handles all MCP details
+
+### Layer 4: Chat System (PRESERVED)
+
+**Existing Chat Widget** (frontend, unchanged):
+- User types message
+- Sends to `/api/chat` endpoint (existing REST)
+- Receives response from OpenAI Agents SDK
+- Agent internally may call task tools (existing pattern)
+
+**Chat Service** (`src/services/chat_service.py`, already fixed):
+- Receives message
+- Constructs context (last 20 messages)
+- Calls OpenAI Agents with task tools available
+- Agent decides which task operation to invoke
+- Results stored in database
+
+**Key Point**: Chat widget does NOT use MCP directly. MCP is for external clients only.
+
+### Data Flow Diagrams
+
+#### Scenario 1: REST API Task Creation
+```
+Client → POST /api/tasks
+  ↓
+REST Endpoint → Validate JWT
+  ↓
+Task Service → SQLModel ORM → PostgreSQL
+  ↓
+Response → Client
+```
+
+#### Scenario 2: Chat-based Task Creation
+```
+Chat Widget → POST /api/chat
+  ↓
+Chat Service → OpenAI Agent
+  ↓
+Agent (internal) → task_tools.add_task()
+  ↓
+add_task() → SQLModel ORM → PostgreSQL
+  ↓
+Chat Service → Format response
+  ↓
+Response → Chat Widget
+```
+
+#### Scenario 3: MCP Client Task Creation
+```
+MCP Client → Connect with JWT
+  ↓
+MCP Transport → Validate JWT
+  ↓
+MCP Tool (add_task) → mcp_service.py
+  ↓
+add_task() → SQLModel ORM → PostgreSQL
+  ↓
+MCP Response → Client
+```
+
+**Key**: All three paths write to same PostgreSQL database → Immediate consistency
+
+---
+
+## Implementation Strategy
+
+### Phase 0: Research (This Plan - IN PROGRESS)
+
+**Research Tasks** (via agent delegation):
+1. ✅ Official MCP SDK integration patterns - Confirm WebSocket vs HTTP transport
+2. ✅ JWT validation in async context - FastAPI middleware pattern
+3. ✅ PostgreSQL transaction handling for concurrent writes - ACID guarantees
+4. ⏳ MCP tool discovery endpoint format - tools/list response schema
+5. ⏳ MCP error response standards - Error codes and formats
+
+**Deliverables**:
+- `research.md` - Consolidated findings with decision rationale
+
+### Phase 1: Design & Contracts
+
+**Design Tasks**:
+1. **Data Model** (`data-model.md`):
+   - Confirm Task entity schema (existing from Phase 2)
+   - Define MCP tool input schemas (Pydantic models)
+   - Define MCP tool response schemas
+
+2. **API Contracts** (`contracts/`):
+   - `mcp-tools.openapi.yaml` - Internal tool endpoint specs
+   - `authentication.yaml` - JWT validation layer
+   - Tool signatures with parameter definitions
+
+3. **Quickstart** (`quickstart.md`):
+   - How to run MCP server locally
+   - How to connect MCP client for testing
+   - Example MCP tool invocations
+
+**Deliverables**:
+- `data-model.md` - Complete data model
+- `contracts/mcp-tools.openapi.yaml` - Tool signatures
+- `contracts/authentication.yaml` - JWT validation pattern
+- `quickstart.md` - Development guide
+
+### Phase 2: Task Generation
+
+**NOT in this `/sp.plan` output** - Will be generated by `/sp.tasks` command
+
+Will generate actionable, dependency-ordered tasks for:
+1. Create MCP service module (`src/services/mcp_service.py`)
+2. Create MCP transport layer (`src/api/mcp.py`)
+3. Write MCP tool unit tests
+4. Write MCP integration tests
+5. Test REST ↔ MCP consistency
+6. Add observability/logging
+7. Documentation and quickstart
+
+---
+
+## Success Criteria for This Plan
+
+| Criterion | How to Verify |
+|-----------|---------------|
+| Technical Context complete | All NEEDS CLARIFICATION resolved |
+| Constitution Check passes | All principles verified ✅ |
+| Architecture is clear | Data flows documented and justified |
+| No implementation ambiguity | Contracts and data model ready for coding |
+| Phase 1 deliverables ready | research.md, data-model.md, contracts/ prepared |
+
+**Status**: ⏳ In Progress - Phase 0 research tasks pending
+
+---
 
 ## Risks & Mitigations
 
-| Risk | Impact | Mitigation |
-|------|--------|------------|
-| OpenAI API latency >5s | User perceives chatbot as slow | Typing indicator provides feedback; timeout with user-friendly error |
-| OpenAI API key exposure | Security breach | Key stored in `.env`, never committed; backend-only access |
-| AI hallucinates non-existent tasks | User confusion, data integrity | Agent instructions + tool return values constrain behavior; disambiguation flow |
-| Mobile swipe gesture conflicts with scroll | UX bug | Swipe only on panel header, not message area |
-| Token cost overruns | Unexpected bills | 20-message context window limits tokens per request; can add rate limiting later |
+| Risk | Severity | Mitigation |
+|------|----------|-----------|
+| MCP SDK learning curve | Low | Official SDK is well-documented; start with hello-world example |
+| JWT validation in async context | Low | FastAPI has built-in async support; use existing auth middleware |
+| Database transaction isolation | Low | PostgreSQL ACID guarantees; SQLModel handles transactions |
+| Concurrent MCP connections | Medium | Test with 10+ simultaneous connections; monitor resource usage |
+| REST ↔ MCP data sync | Medium | Immediate consistency (same ACID transactions); contract tests verify |

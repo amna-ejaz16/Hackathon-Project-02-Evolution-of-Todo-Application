@@ -1,0 +1,364 @@
+openapi: 3.0.0
+info:
+  title: MCP Task Tools API (Internal Contracts)
+  version: 1.0.0
+  description: |
+    Internal contract definitions for MCP task tools.
+    These are NOT REST endpoints but represent the tool interface that MCP clients will invoke.
+
+servers:
+  - url: ws://localhost:8001/mcp
+    description: MCP WebSocket endpoint (internal, local development)
+
+paths: {}  # No REST paths; MCP is tool-based, not HTTP-based
+
+components:
+  schemas:
+    TaskResponse:
+      type: object
+      required:
+        - id
+        - title
+        - status
+        - priority
+        - created_at
+      properties:
+        id:
+          type: integer
+          description: Unique task identifier
+        title:
+          type: string
+          description: Task title
+        description:
+          type: string
+          nullable: true
+          description: Optional task description
+        priority:
+          type: string
+          enum: [low, medium, high]
+          default: medium
+          description: Task priority level
+        category:
+          type: string
+          nullable: true
+          description: Optional task category/tag
+        due_date:
+          type: string
+          format: date
+          nullable: true
+          description: Optional due date in ISO 8601 format (YYYY-MM-DD)
+        status:
+          type: string
+          enum: [pending, completed]
+          description: Task completion status
+        created_at:
+          type: string
+          format: date-time
+          description: Timestamp when task was created
+        updated_at:
+          type: string
+          format: date-time
+          description: Timestamp when task was last updated
+
+    TaskCreateInput:
+      type: object
+      required:
+        - title
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 255
+          description: Task title (required)
+        description:
+          type: string
+          nullable: true
+          description: Optional task description
+        priority:
+          type: string
+          enum: [low, medium, high]
+          default: medium
+          description: Task priority level (default: medium)
+        category:
+          type: string
+          nullable: true
+          description: Optional task category
+        due_date:
+          type: string
+          format: date
+          nullable: true
+          description: Optional due date (ISO 8601 format)
+
+    TaskUpdateInput:
+      type: object
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 255
+        description:
+          type: string
+          nullable: true
+        priority:
+          type: string
+          enum: [low, medium, high]
+        category:
+          type: string
+          nullable: true
+        due_date:
+          type: string
+          format: date
+          nullable: true
+        status:
+          type: string
+          enum: [pending, completed]
+
+    TaskListResponse:
+      type: object
+      properties:
+        tasks:
+          type: array
+          items:
+            $ref: '#/components/schemas/TaskResponse'
+        total:
+          type: integer
+          description: Total number of tasks (ignoring pagination)
+        page:
+          type: integer
+          description: Current page number (1-indexed)
+        page_size:
+          type: integer
+          description: Number of tasks per page
+        total_pages:
+          type: integer
+          description: Total number of pages
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+              description: Error code (INVALID_PARAMETER, UNAUTHORIZED, etc.)
+            message:
+              type: string
+              description: Human-readable error message
+            details:
+              type: object
+              nullable: true
+              description: Additional error context
+
+x-mcp-tools:
+  add_task:
+    name: add_task
+    description: Create a new task with optional details
+    input_schema:
+      $ref: '#/components/schemas/TaskCreateInput'
+    output_schema:
+      $ref: '#/components/schemas/TaskResponse'
+    errors:
+      - code: VALIDATION_ERROR
+        message: Invalid input parameters
+      - code: UNAUTHORIZED
+        message: User not authenticated or token expired
+      - code: SERVER_ERROR
+        message: Internal server error
+
+  list_tasks:
+    name: list_tasks
+    description: Query user's tasks with optional filtering and pagination
+    input_schema:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [pending, completed]
+          nullable: true
+          description: Filter by status (optional)
+        priority:
+          type: string
+          enum: [low, medium, high]
+          nullable: true
+          description: Filter by priority (optional)
+        category:
+          type: string
+          nullable: true
+          description: Filter by category (optional)
+        page:
+          type: integer
+          default: 1
+          description: Page number for pagination (1-indexed)
+        page_size:
+          type: integer
+          default: 20
+          maximum: 100
+          description: Number of tasks per page
+    output_schema:
+      $ref: '#/components/schemas/TaskListResponse'
+    errors:
+      - code: VALIDATION_ERROR
+        message: Invalid filter parameters
+      - code: UNAUTHORIZED
+        message: User not authenticated
+      - code: SERVER_ERROR
+        message: Internal server error
+
+  complete_task:
+    name: complete_task
+    description: Mark a task as complete
+    input_schema:
+      type: object
+      required:
+        - task_id
+      properties:
+        task_id:
+          type: integer
+          description: ID of task to complete
+    output_schema:
+      $ref: '#/components/schemas/TaskResponse'
+    errors:
+      - code: NOT_FOUND
+        message: Task not found or belongs to different user
+      - code: UNAUTHORIZED
+        message: User not authenticated
+      - code: SERVER_ERROR
+        message: Internal server error
+
+  delete_task:
+    name: delete_task
+    description: Delete a task permanently
+    input_schema:
+      type: object
+      required:
+        - task_id
+      properties:
+        task_id:
+          type: integer
+          description: ID of task to delete
+    output_schema:
+      type: object
+      properties:
+        success:
+          type: boolean
+          description: Whether deletion was successful
+        message:
+          type: string
+          description: Confirmation message
+        task_id:
+          type: integer
+          description: ID of deleted task
+    errors:
+      - code: NOT_FOUND
+        message: Task not found or belongs to different user
+      - code: UNAUTHORIZED
+        message: User not authenticated
+      - code: SERVER_ERROR
+        message: Internal server error
+
+  update_task:
+    name: update_task
+    description: Update task fields (only provided fields are updated)
+    input_schema:
+      type: object
+      required:
+        - task_id
+      properties:
+        task_id:
+          type: integer
+          description: ID of task to update
+        title:
+          type: string
+          minLength: 1
+          maxLength: 255
+          description: New title (optional, only update if provided)
+        description:
+          type: string
+          nullable: true
+          description: New description (optional)
+        priority:
+          type: string
+          enum: [low, medium, high]
+          description: New priority (optional)
+        category:
+          type: string
+          nullable: true
+          description: New category (optional)
+        due_date:
+          type: string
+          format: date
+          nullable: true
+          description: New due date (optional)
+        status:
+          type: string
+          enum: [pending, completed]
+          description: New status (optional)
+    output_schema:
+      $ref: '#/components/schemas/TaskResponse'
+    errors:
+      - code: VALIDATION_ERROR
+        message: Invalid input parameters (e.g., invalid enum value)
+      - code: NOT_FOUND
+        message: Task not found or belongs to different user
+      - code: UNAUTHORIZED
+        message: User not authenticated
+      - code: SERVER_ERROR
+        message: Internal server error
+
+security:
+  - BearerAuth: []
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        JWT token issued by Better Auth.
+        Token payload must contain 'sub' (user_id) claim.
+        Same token used for REST API and MCP server.
+
+---
+
+## Implementation Notes
+
+### Authentication
+- All MCP tool calls MUST include JWT token in Authorization header
+- Token extracted and validated before tool execution
+- User ID extracted from token 'sub' claim
+- All subsequent operations scoped to user ID
+
+### User Scoping
+- Every query includes WHERE clause: user_id = {extracted_from_token}
+- User cannot see or modify other users' tasks
+- Database enforces via foreign key: task.user_id REFERENCES user(id)
+
+### Error Handling
+- All errors return structured response (see ErrorResponse schema)
+- Client can parse error.code to determine action
+- error.details may contain field-level error info
+
+### Validation
+- All input parameters validated before database operation
+- Invalid enums (e.g., priority="urgent") rejected with VALIDATION_ERROR
+- Required fields checked (e.g., title required for add_task)
+- String length limits enforced (title: 1-255 chars)
+
+### Pagination
+- list_tasks supports page-based pagination
+- Default: page=1, page_size=20
+- Maximum page_size: 100 (prevent abuse)
+- total_pages = ceil(total / page_size)
+
+### Atomicity
+- Each tool call is atomic: all-or-nothing
+- Database transaction fails → entire operation rolls back
+- Client receives error and can retry safely
+
+### Logging
+- All tool invocations logged: timestamp, user_id, tool_name, parameters, result
+- Logs include success/failure and any error details
+- Logs used for audit trail and debugging (FR-MCP-015)
+

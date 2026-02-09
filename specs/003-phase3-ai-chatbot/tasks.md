@@ -1,316 +1,588 @@
-# Tasks: Todo AI Chatbot - Cyberpunk UI/UX
+# Implementation Tasks: Todo AI Chatbot with MCP Server
 
-**Input**: Design documents from `/specs/003-phase3-ai-chatbot/`
-**Prerequisites**: plan.md (required), spec.md (required for user stories), research.md, data-model.md, contracts/chat-api.yaml
-
-**Tests**: Not explicitly requested — verification is manual via quickstart.md integration test flow.
-
-**Organization**: Tasks are grouped by user story to enable independent implementation and testing of each story.
-
-## Format: `[ID] [P?] [Story] Description`
-
-- **[P]**: Can run in parallel (different files, no dependencies)
-- **[Story]**: Which user story this task belongs to (e.g., US1, US2, US3)
-- Include exact file paths in descriptions
-
-## Path Conventions
-
-- **Backend**: `backend/src/`, `backend/requirements.txt`
-- **Frontend**: `frontend/src/`
+**Feature Branch**: `003-phase3-ai-chatbot`  
+**Created**: 2026-02-09  
+**Spec**: [spec.md](./spec.md) | **Plan**: [plan.md](./plan.md)  
+**Total Tasks**: 47 | **Estimated Effort**: 80-100 hours
 
 ---
 
-## Phase 1: Setup (Shared Infrastructure)
+## Overview
 
-**Purpose**: Install new dependencies and configure environment for AI chatbot feature
+This document breaks the architectural plan into atomic, independently testable tasks organized by user story priority (P1 → P2 → P3) and dependency graph. Each task is:
 
-- [x] T001 Add `openai-agents>=0.8.0` and `openai>=1.0.0` to `backend/requirements.txt` and install via pip
-- [x] T002 Add `OPENAI_API_KEY` setting to `backend/src/core/config.py` in the `Settings.__init__` method (required, with validation)
-- [x] T003 [P] Add `OPENAI_API_KEY=sk-your-key-here` to `backend/.env.example` as documentation for other developers
-- [x] T004 [P] Create `frontend/src/components/chat/` directory for all chat UI components
+- ✅ Specific enough for autonomous execution (file paths included)
+- ✅ Small enough to complete in 2-4 hours
+- ✅ Independently testable where possible
+- ✅ Organized to enable parallel development
+
+**MVP Scope**: User Stories 1-3 + MCP US 9-10 (core chat + MCP server)
+
+---
+
+## Task Dependencies & Execution Order
+
+```
+Phase 1: Setup & Infrastructure
+  ├─ Project structure
+  ├─ Database migrations
+  └─ Environment setup
+
+Phase 2: Foundational (Blocking for all stories)
+  ├─ JWT authentication extension for MCP
+  ├─ Conversation & Message models
+  ├─ Chat service initialization
+  └─ MCP service framework
+
+Phase 3: User Stories (P1 Priority - Can start after Phase 2)
+  ├─ US1: Chat Widget (Frontend)
+  ├─ US2: Message Send/Receive (API + Service)
+  ├─ US3: Task Creation via Chat (Integration)
+  ├─ US9: MCP Tool Discovery (Backend)
+  └─ US10: MCP Tool Operations (Backend)
+
+Phase 4: User Stories (P2 Priority - Depend on Phase 3)
+  ├─ US4: List Tasks via Chat
+  ├─ US5: Complete/Delete via Chat
+  └─ US6: Update Tasks via Chat
+
+Phase 5: User Stories (P3 Priority - Can start after Phase 2)
+  ├─ US7: Quick Action Pills (Frontend)
+  └─ US8: Conversation History Persistence (Service)
+
+Phase 6: Polish & Cross-Cutting
+  ├─ Error handling & logging
+  ├─ Performance optimization
+  ├─ Documentation & examples
+  └─ Testing & validation
+```
+
+---
+
+## Phase 1: Setup & Infrastructure
+
+### Initialize Project Structure
+
+- [ ] T001 Create backend project directories per plan (src/services/mcp_service.py, src/api/mcp.py, tests/)
+- [ ] T002 Create contracts directory structure (specs/003-phase3-ai-chatbot/contracts/)
+- [ ] T003 Verify existing backend/frontend structure matches plan (backend/, frontend/)
+
+### Database & Environment
+
+- [ ] T004 Create migration for Conversation table in backend/migrations/
+- [ ] T005 Create migration for Message table (with metadata_json field renamed from metadata issue)
+- [ ] T006 Update .env template with MCP_HOST, MCP_PORT, MCP_DEBUG variables
+- [ ] T007 Update requirements.txt with mcp package (Official MCP SDK) if not present
+- [ ] T008 Verify JWT_SECRET_KEY and JWT_ALGORITHM in .env
 
 ---
 
 ## Phase 2: Foundational (Blocking Prerequisites)
 
-**Purpose**: Chat data models and database table registration — MUST be complete before ANY user story
+### Authentication Layer Extension
 
-**CRITICAL**: No user story work can begin until this phase is complete
+- [ ] T009 [P] Create JWT validation decorator for MCP in src/middleware/mcp_auth.py
+  - Extract user_id from JWT token in MCP context
+  - Raise 401 if token missing/invalid/expired
+  - Return user_id for all MCP tool calls
+- [ ] T010 [P] Add MCP authentication gate to fastapi WebSocket middleware
+  - Intercept WebSocket upgrade requests to /mcp endpoint
+  - Validate JWT before allowing connection
 
-- [x] T005 Create `Conversation` SQLModel (table=True) in `backend/src/models/chat.py` with fields: id (PK, auto-increment), user_id (Text, NOT NULL, indexed), title (Text, default "Task Assistant"), created_at (datetime, default utcnow), updated_at (datetime, default utcnow). user_id is TEXT to match Better Auth's user.id format per data-model.md
-- [x] T006 Create `Message` SQLModel (table=True) in `backend/src/models/chat.py` with fields: id (PK, auto-increment), conversation_id (Integer, FK→conversation.id, indexed), role (Text, NOT NULL, "user" or "assistant"), content (Text, NOT NULL), metadata (Optional JSON/Text, nullable), created_at (datetime, default utcnow). Follow existing Task model patterns from `backend/src/models/task.py`
-- [x] T007 [P] Create Pydantic schemas in `backend/src/models/chat.py`: ChatRequest (message: str, minLength 1, maxLength 2000), ChatResponse (response: str, conversation_id: int, action: Optional[str], task_id: Optional[int]), ChatHistoryResponse (messages: List[MessageRead], conversation_id: Optional[int], total: int), MessageRead (id: int, role: str, content: str, metadata: Optional[dict], created_at: datetime). Match contract in `contracts/chat-api.yaml`
-- [x] T008 Register chat models in `backend/src/core/database.py` by adding `from ..models.chat import Conversation, Message` in the `create_db_and_tables()` function (next to existing Task import at line 52). Tables auto-created by SQLModel.metadata.create_all with checkfirst=True
+### Chat & Conversation Models
 
-**Checkpoint**: Foundation ready — chat tables created on next backend startup, schemas available for all stories
+- [ ] T011 [P] Create/verify Conversation SQLModel in src/models/chat.py
+  - Fields: id, user_id, created_at, updated_at
+  - Unique constraint on user_id (one active conversation per user)
+  - Foreign key to user(id) with CASCADE delete
+- [ ] T012 [P] Create/verify Message SQLModel in src/models/chat.py
+  - Fields: id, conversation_id, role (enum: user|assistant), content, metadata_json
+  - Foreign key to conversation(id) with CASCADE delete
+  - Indexes on (conversation_id, created_at)
 
----
+### Chat Service Foundation
 
-## Phase 3: User Story 1 — Open and Close the AI Chat Widget (Priority: P1) MVP
+- [ ] T013 Create ChatService base class in src/services/chat_service.py
+  - Dependency: DB session, OpenAI client
+  - Methods: load_history(), save_message(), prune_old_messages()
+  - Auto-prune when message count > 200 per conversation
+- [ ] T014 Implement load_conversation_history() in ChatService
+  - Query messages for user's conversation
+  - Return last 20 messages for AI context (sliding window)
+  - Handle case where no conversation exists yet
+- [ ] T015 Implement save_conversation_message() in ChatService
+  - Create Conversation if doesn't exist
+  - Insert Message record (role, content, metadata)
+  - Trigger auto-prune check
 
-**Goal**: Logged-in user sees a FAB on the dashboard, clicks to open a cyberpunk-themed chat panel, clicks again to close
+### MCP Service Foundation
 
-**Independent Test**: Verify FAB renders on dashboard, opens panel on click, closes on dismiss. No backend needed.
-
-**Acceptance Criteria** (from spec.md US1):
-- FAB visible at bottom-right with neon purple-to-magenta gradient and soft glow
-- Chat panel slides open with smooth animation on click
-- Close button or swipe-down (mobile) dismisses panel
-- Mobile < 768px: full-width bottom sheet; Desktop: side panel ~380px wide
-
-### Implementation for User Story 1
-
-- [x] T009 [P] [US1] Create `ChatHeader.tsx` in `frontend/src/components/chat/ChatHeader.tsx` — AI avatar icon (robot/sparkles emoji or SVG), title "Task Manager Assistant", close button (X), gradient accent strip at top. Props: `onClose: () => void`. Use existing cyberpunk classes: `card-dark`, `text-gradient`, glassmorphism backdrop
-- [x] T010 [P] [US1] Create `ChatInput.tsx` in `frontend/src/components/chat/ChatInput.tsx` — dark glassmorphism input field with `input-dark` class, neon focus ring (purple glow on focus), gradient send button with hover/press states. Props: `onSend: (message: string) => void`, `disabled: boolean`. Enter key submits, empty input blocked (FR-005). Use existing `btn-neon` patterns
-- [x] T011 [US1] Create `ChatWidget.tsx` in `frontend/src/components/chat/ChatWidget.tsx` — FAB button (fixed bottom-right, neon gradient, hover lift animation via Framer Motion `whileHover`/`whileTap`) + panel container. State: `isOpen` boolean. FAB: circular, 56px, `bg-gradient-to-r from-purple-500 to-pink-500` with shadow glow. Panel: conditional render with `AnimatePresence` + `motion.div` slide animation. Props: `onTaskChange: () => void`. Desktop: 380px wide, 560px tall, fixed bottom-right. Mobile < 768px: full-width bottom sheet. Compose ChatHeader + ChatInput inside panel. FR-001, FR-002, FR-003
-- [x] T012 [US1] Implement mobile bottom-sheet behavior in `ChatWidget.tsx` — use Framer Motion `drag="y"` on panel header (NOT message area) with `dragConstraints` and `onDragEnd` to dismiss when dragged down >100px. Media query or `useMediaQuery` hook for < 768px breakpoint (FR-003, NFR-002)
-- [x] T013 [US1] Embed `ChatWidget` in `frontend/src/app/dashboard/DashboardClient.tsx` — import ChatWidget and render at end of component JSX (before closing fragment). Pass `onTaskChange={fetchTasks}` callback prop. This connects the chat to dashboard refresh (FR-025)
-
-**Checkpoint**: FAB visible on dashboard, panel opens/closes with animations. No backend wiring yet.
-
----
-
-## Phase 4: User Story 2 — Send a Message and Receive AI Response (Priority: P1)
-
-**Goal**: User types a message, sees it as a user bubble, typing indicator shows, AI response appears as assistant bubble
-
-**Independent Test**: Type any message, verify send/receive loop works, messages display correctly with proper styling
-
-**Acceptance Criteria** (from spec.md US2):
-- User message appears as right-aligned bubble with neon styling
-- Typing indicator (pulsing dots) while AI processes
-- AI response appears as left-aligned bubble with glassmorphism
-- Empty messages blocked; auto-scroll to latest message
-
-### Backend Implementation for User Story 2
-
-- [ ] T014 [US2] Create `backend/src/services/task_tools.py` — define `create_task_tools(user_id: str, session: Session)` factory function that returns a list of `@function_tool` decorated functions. Start with a single placeholder tool `list_tasks` that queries tasks for user_id and returns a formatted string. Import from `agents` package: `from agents import function_tool`. Each tool receives `user_id` via closure. Tools will be expanded in US3-US6
-- [ ] T015 [US2] Create `backend/src/services/chat_service.py` — implement `ChatService` class with methods: `get_or_create_conversation(user_id, session)` → returns Conversation, `get_context_messages(conversation_id, session, limit=20)` → last 20 messages as list (FR-026), `store_message(conversation_id, role, content, metadata, session)` → saves Message + prunes if >200 (FR-027), `process_message(user_message, user_id, session)` → full flow: get/create conversation → store user message → fetch context → create Agent with tools → run via `Runner.run()` → extract response + metadata → store assistant message → return ChatResponse. Use `from agents import Agent, Runner` and `from .task_tools import create_task_tools`
-- [ ] T016 [US2] Create `backend/src/api/chat.py` — implement `POST /api/chat` endpoint. Auth: `get_current_user` dependency (same as tasks.py). Input: `ChatRequest`. Process: call `ChatService.process_message()`. Output: `ChatResponse`. Error handling: try/except for OpenAI errors → HTTP 503 with "AI service temporarily unavailable" message. Validation: 422 for empty message. Match contract in `contracts/chat-api.yaml`
-- [ ] T017 [US2] Add `GET /api/chat/history` endpoint in `backend/src/api/chat.py` — Auth: `get_current_user`. Query param: `limit` (default 50, min 1, max 200). Returns `ChatHistoryResponse` with messages array, conversation_id (null if no conversation), and total count. Match contract in `contracts/chat-api.yaml`
-- [ ] T018 [US2] Register chat router in `backend/src/main.py` — import chat router and add `app.include_router(chat_router, prefix="/api/chat", tags=["chat"])` after the existing tasks router registration (line 66)
-
-### Frontend Implementation for User Story 2
-
-- [ ] T019 [P] [US2] Create `ChatMessage.tsx` in `frontend/src/components/chat/ChatMessage.tsx` — individual message bubble. Props: `role: "user" | "assistant"`, `content: string`, `timestamp: string`. User bubble: right-aligned, neon purple/magenta gradient bg, white text. Assistant bubble: left-aligned, `glass-strong` or dark translucent bg, light text. Framer Motion `initial={{ opacity: 0, y: 10 }}` → `animate={{ opacity: 1, y: 0 }}` for fade+slide entrance (FR-006, FR-008)
-- [ ] T020 [P] [US2] Create `TypingIndicator.tsx` in `frontend/src/components/chat/TypingIndicator.tsx` — three pulsing dots with staggered animation using Framer Motion. Each dot: 8px circle, neon purple. Stagger delay: 0.15s between dots. Animation: scale 0.5→1→0.5 with infinite repeat (FR-007)
-- [ ] T021 [US2] Create `ChatMessages.tsx` in `frontend/src/components/chat/ChatMessages.tsx` — scrollable container for messages. Props: `messages: Array<{id, role, content, created_at}>`, `isLoading: boolean`. Uses `useRef` for scroll container + `useEffect` to auto-scroll to bottom on new messages (FR-009). Renders `ChatMessage` for each message + `TypingIndicator` when `isLoading=true`. Overflow-y auto, dark themed scrollbar
-- [ ] T022 [US2] Wire ChatWidget to backend API in `frontend/src/components/chat/ChatWidget.tsx` — add state: `messages[]`, `isSending` boolean, `conversationId`. On panel open (first time): call `GET /api/chat/history` via existing `api.get("/api/chat/history")` from `frontend/src/lib/api.ts` to load history. On send: append user message to state → set `isSending=true` → call `POST /api/chat` with `{ message }` → append AI response to state → set `isSending=false`. Check response `action` field — if task mutation action (task_created/task_updated/task_completed/task_uncompleted/task_deleted), call `onTaskChange()` (FR-025). Compose ChatMessages inside panel between ChatHeader and ChatInput
-
-**Checkpoint**: Full send/receive loop working. User can type messages, see typing indicator, get AI responses. Dashboard auto-refreshes on task mutations.
+- [ ] T016 Create MCPService class in src/services/mcp_service.py
+  - Dependency: DB session, user_id (from JWT)
+  - Base class for all 5 MCP tools
+  - Each tool as separate method
+  - All methods async (FastAPI async context)
+- [ ] T017 [P] Implement Pydantic models for MCP tool inputs in src/models/mcp_schemas.py
+  - TaskCreateInput (title required, others optional)
+  - TaskUpdateInput (all optional)
+  - TaskListInput (filters + pagination)
+  - TaskIdInput (single task_id)
+- [ ] T018 [P] Implement error handling for MCP in src/services/mcp_service.py
+  - Custom exception: MCPError(code, message, details)
+  - Exception handler for validation errors
+  - Exception handler for authorization errors (user_id mismatch)
+  - Exception handler for not found errors (task doesn't belong to user)
 
 ---
 
-## Phase 5: User Story 3 — Create a Task via Chat (Priority: P1)
+## Phase 3: User Stories P1 (Core Chat & MCP)
 
-**Goal**: User says "Add a task to buy groceries by Friday with high priority" and the AI creates it, confirms, and dashboard updates
+### User Story 1: Open and Close Chat Widget (US1)
 
-**Independent Test**: Send create-task command via chat, verify AI confirms with details, verify task appears in dashboard
+**Goal**: Floating chat button visible on dashboard; opens/closes panel with smooth animation  
+**Independent Test**: FAB renders, opens panel, closes panel  
+**Files Affected**: frontend/src/components/chat/ChatWidget.tsx (MOSTLY COMPLETE from Phase 3 chat work)
 
-**Acceptance Criteria** (from spec.md US3):
-- Natural language task creation with AI confirmation including details
-- Dashboard auto-refreshes showing new task
-- Incomplete commands trigger clarification (not blank task creation)
+- [ ] T019 [US1] Verify ChatWidget FAB rendering on dashboard at bottom-right
+- [ ] T020 [US1] Verify slide animation on panel open (Framer Motion)
+- [ ] T021 [US1] Verify slide animation on panel close
+- [ ] T022 [US1] Verify mobile full-width bottom sheet on viewports < 768px
+- [ ] T023 [US1] Verify swipe-down gesture closes panel on mobile
+- [ ] T024 [US1] Verify cyberpunk styling (gradient, glow, glass morphism) matches dashboard theme
 
-### Implementation for User Story 3
-
-- [ ] T023 [US3] Implement `add_task` function tool in `backend/src/services/task_tools.py` — `@function_tool` decorator. Parameters: title (str, required), description (str, optional), priority (str, default "medium"), category (str, optional), due_date (str, optional, ISO format). Creates Task via SQLModel session (same pattern as `backend/src/api/tasks.py` lines 84-121). Returns formatted string: "Created task '{title}' (ID: {id}) with priority {priority}..." including due_date and category if provided. Bind user_id via closure from factory function
-- [ ] T024 [US3] Configure Agent instructions for task creation in `backend/src/services/chat_service.py` — set Agent `instructions` string to include: "You are a task management assistant. You help users manage their todo tasks. When a user wants to create a task, extract the title, description, priority (low/medium/high), category, and due date from their message. If the title is unclear or missing, ask for clarification. Apply reasonable defaults: medium priority, no category, no due date. Always confirm what you created." (FR-018, FR-023). Instructions must explicitly prohibit non-task actions
-- [ ] T025 [US3] Set `action` field in ChatResponse metadata — in `chat_service.py`, after agent execution, parse tool calls from agent result to determine action type. If `add_task` was called, set `action="task_created"` and `task_id` from the tool return. If no tool called, set `action="conversation"`. Map to enum values from `contracts/chat-api.yaml`: task_created, task_updated, task_completed, task_uncompleted, task_deleted, tasks_listed, clarification, conversation
-
-**Checkpoint**: Task creation via chat works end-to-end. Dashboard auto-refreshes.
+**Expected Result**: Chat widget fully functional with smooth animations, visible on dashboard
 
 ---
 
-## Phase 6: User Story 4 — List and Query Tasks via Chat (Priority: P2)
+### User Story 2: Send Message and Receive Response (US2)
 
-**Goal**: User asks "Show all my tasks" or "What's pending?" and AI responds with formatted task list
+**Goal**: User sends message, sees typing indicator, receives AI response  
+**Independent Test**: Send message, verify response appears, check error handling  
+**Files Affected**: frontend/src/components/chat/ChatWidget.tsx, backend/src/api/chat.py, src/services/chat_service.py
 
-**Independent Test**: Ask AI to list tasks, verify response matches dashboard data
+#### Frontend Tasks
 
-**Acceptance Criteria** (from spec.md US4):
-- "Show all my tasks" returns formatted list with title, status, priority, due date
-- "What's pending?" returns only incomplete tasks
-- "Show high priority tasks" filters correctly
-- No tasks returns friendly suggestion message
+- [ ] T025 [P] [US2] Verify ChatInput component sends message on Enter or button click
+- [ ] T026 [P] [US2] Verify typing indicator shows while AI processes response
+- [ ] T027 [P] [US2] Verify user message appears as right-aligned bubble with neon styling
+- [ ] T028 [P] [US2] Verify assistant response appears as left-aligned bubble with glassmorphism
+- [ ] T029 [P] [US2] Verify message auto-scroll to latest message (ChatMessages component)
+- [ ] T030 [P] [US2] Verify error handling displays user-friendly error message in chat
 
-### Implementation for User Story 4
+#### Backend Tasks
 
-- [ ] T026 [US4] Implement `list_tasks` function tool in `backend/src/services/task_tools.py` — replace placeholder from T014 with full implementation. Parameters: status (str, optional: "all"/"pending"/"completed"), priority (str, optional: "low"/"medium"/"high"), category (str, optional). Queries Task table filtered by user_id + optional filters (same pattern as `backend/src/api/tasks.py` lines 24-80). Returns formatted string listing tasks or "You don't have any tasks yet" if empty. Set action to "tasks_listed"
-- [ ] T027 [US4] Update Agent instructions in `backend/src/services/chat_service.py` to handle list queries — add: "When a user asks to see tasks, use list_tasks tool with appropriate filters. Format the response as a numbered list with title, priority, status, and due date. If no tasks match, suggest creating one."
+- [ ] T031 [US2] Verify POST /api/chat endpoint receives message
+- [ ] T032 [US2] Implement conversation auto-creation if user has no active conversation
+- [ ] T033 [US2] Call OpenAI Agents SDK with conversation history (last 20 messages)
+- [ ] T034 [US2] Save user message to database via ChatService.save_conversation_message()
+- [ ] T035 [US2] Save assistant response to database with metadata (tool calls, action)
+- [ ] T036 [US2] Return response with conversation_id and action (if task operation detected)
+- [ ] T037 [US2] Implement error handling for AI service unavailable (503 response)
+- [ ] T038 [US2] Implement error handling for authentication failure (401 response)
 
-**Checkpoint**: Users can list and filter tasks via chat.
-
----
-
-## Phase 7: User Story 5 — Complete and Delete Tasks via Chat (Priority: P2)
-
-**Goal**: User can mark tasks complete or delete them via natural language, with disambiguation for ambiguous references
-
-**Independent Test**: Complete a known task via chat, delete a task with confirmation, verify dashboard updates
-
-**Acceptance Criteria** (from spec.md US5):
-- "Complete the buy groceries task" marks it done with confirmation
-- "Delete the buy groceries task" asks for confirmation before deleting
-- Non-existent task returns helpful message
-- Multiple matches triggers disambiguation list
-
-### Implementation for User Story 5
-
-- [ ] T028 [US5] Implement `complete_task` function tool in `backend/src/services/task_tools.py` — Parameters: task_id (int, required). Queries Task by id + user_id (ownership check). Sets completed=True, updates updated_at. Returns confirmation string with task title. Returns error string if task not found. Pattern from `backend/src/api/tasks.py` lines 227-256. Set action to "task_completed"
-- [ ] T029 [US5] Implement `uncomplete_task` function tool in `backend/src/services/task_tools.py` — Parameters: task_id (int, required). Sets completed=False. Pattern from `backend/src/api/tasks.py` lines 259-289. Set action to "task_uncompleted"
-- [ ] T030 [US5] Implement `delete_task` function tool in `backend/src/services/task_tools.py` — Parameters: task_id (int, required). Queries Task by id + user_id. Deletes task. Returns confirmation string. Pattern from `backend/src/api/tasks.py` lines 197-223. Set action to "task_deleted"
-- [ ] T031 [US5] Update Agent instructions for completion/deletion in `backend/src/services/chat_service.py` — add: "When user wants to complete or delete a task, first use list_tasks to find matching tasks by title keywords. If exactly one match, proceed with the operation. If multiple matches, list them with IDs and ask user to specify. If no match, inform user and offer to list tasks. For delete, always confirm before proceeding." (FR-023, FR-024)
-
-**Checkpoint**: Complete and delete task operations work via chat with disambiguation.
+**Expected Result**: Full message exchange working; messages persisted to database
 
 ---
 
-## Phase 8: User Story 6 — Update Tasks via Chat (Priority: P2)
+### User Story 3: Create Task via Chat (US3)
 
-**Goal**: User can change task priority, category, due date, title, or description via natural language
+**Goal**: User says "Add a task to buy groceries", AI creates task, dashboard updates  
+**Independent Test**: Send task command, verify task appears in dashboard and database  
+**Files Affected**: backend/src/services/chat_service.py, task_tools.py, api/chat.py
 
-**Independent Test**: Update a task field via chat, verify change in dashboard
+#### Backend Integration
 
-**Acceptance Criteria** (from spec.md US6):
-- "Change buy groceries to high priority" updates priority
-- "Set due date for buy groceries to next Monday" updates due date
-- "Rename buy groceries to Get weekly groceries" updates title
-- Ambiguous update triggers clarification
+- [ ] T039 [US3] Update OpenAI Agents setup to include task_tools.py functions (add_task, list_tasks, etc.)
+- [ ] T040 [US3] Implement tool call detection in ChatService
+  - Parse agent response for action field (e.g., "action": "task_created")
+  - Return action in response JSON
+- [ ] T041 [US3] Implement error handling for incomplete task commands
+  - If title missing, AI asks clarification
+  - Agent validates and re-prompts user if needed
+- [ ] T042 [US3] Implement auto-refresh trigger on frontend
+  - Return "refresh_needed": true when task created
+  - Frontend calls onTaskChange() callback to refresh dashboard
 
-### Implementation for User Story 6
+#### Frontend Integration
 
-- [ ] T032 [US6] Implement `update_task` function tool in `backend/src/services/task_tools.py` — Parameters: task_id (int, required), title (str, optional), description (str, optional), priority (str, optional), category (str, optional), due_date (str, optional). Queries Task by id + user_id. Updates only provided fields (partial update). Pattern from `backend/src/api/tasks.py` lines 150-193. Returns confirmation string with what was changed. Set action to "task_updated"
-- [ ] T033 [US6] Update Agent instructions for task updates in `backend/src/services/chat_service.py` — add: "When user wants to update a task, first find the task using list_tasks, then call update_task with only the fields that need changing. Confirm what was updated."
+- [ ] T043 [P] [US3] Verify task appears in dashboard immediately after chat creation
+- [ ] T044 [P] [US3] Verify confirmation message appears in chat
+- [ ] T045 [P] [US3] Verify task details match what user requested (title, priority, due date)
 
-**Checkpoint**: All CRUD operations (create, read, update, delete, complete) work via chat. Full task management capability.
-
----
-
-## Phase 9: User Story 7 — Quick Action Pills (Priority: P3)
-
-**Goal**: Quick action shortcut buttons below chat input for common operations
-
-**Independent Test**: Tap a pill, verify corresponding message is sent as a chat message
-
-**Acceptance Criteria** (from spec.md US7):
-- Pills displayed below input area with cyberpunk styling
-- Tapping "Show all tasks" sends that as a user message
-
-### Implementation for User Story 7
-
-- [ ] T034 [P] [US7] Create `QuickActionPills.tsx` in `frontend/src/components/chat/QuickActionPills.tsx` — static array of pill objects: [{label: "Show all tasks", message: "Show all my tasks"}, {label: "Add a task", message: "I want to add a new task"}, {label: "What's overdue?", message: "Show me overdue tasks"}]. Props: `onPillClick: (message: string) => void`, `disabled: boolean`. Each pill: rounded-full, small text, neon border glow, hover lift via Framer Motion `whileHover={{ scale: 1.05, y: -2 }}`. Styled with `border border-purple-500/30 bg-purple-500/10 hover:bg-purple-500/20 text-purple-300` (FR-019)
-- [ ] T035 [US7] Integrate QuickActionPills into ChatWidget in `frontend/src/components/chat/ChatWidget.tsx` — render between ChatMessages and ChatInput. Pass `onPillClick` that calls the same send function used by ChatInput. Hide pills when `isSending` is true
-
-**Checkpoint**: Quick action pills provide convenient shortcuts for common operations.
+**Expected Result**: User can create tasks via natural language; dashboard updates immediately
 
 ---
 
-## Phase 10: User Story 8 — Conversation History Persistence (Priority: P3)
+### User Story 9: MCP Server Availability and Tool Discovery (US9)
 
-**Goal**: Chat messages persist across panel open/close and page reloads
+**Goal**: External MCP client can discover 5 task operation tools  
+**Independent Test**: Connect MCP client, call tools/list endpoint, verify tool metadata  
+**Files Affected**: backend/src/api/mcp.py, src/services/mcp_service.py
 
-**Independent Test**: Send messages, close panel, reopen — verify messages still visible. Reload page — verify messages load.
+#### MCP Server Implementation
 
-**Acceptance Criteria** (from spec.md US8):
-- Previous messages displayed when panel reopens
-- Multi-turn context maintained for coherent dialogue (20-message window)
-- First-time open shows welcome message
-- 200-message cap enforced with auto-pruning
+- [ ] T046 [P] [US9] Create MCP WebSocket endpoint at /mcp using Official MCP SDK
+  - Use FastAPI WebSocket handler
+  - Delegate to mcp_server instance from SDK
+  - Pass JWT validation middleware
+- [ ] T047 [P] [US9] Implement tools/list discovery endpoint (Official SDK handles)
+  - Register all 5 tools with SDK via @tool decorators
+  - Each tool has name, description, input_schema
+  - Return JSON Schema format per spec
 
-### Implementation for User Story 8
+#### Tool Registration
 
-- [ ] T036 [US8] Implement conversation loading in `ChatWidget.tsx` — on first panel open, call `GET /api/chat/history` to load existing messages. Set `messages` state from response. If `conversation_id` is null (no prior conversation), display welcome message. Track `historyLoaded` boolean to avoid re-fetching on subsequent opens within same session
-- [ ] T037 [US8] Implement welcome message in `ChatWidget.tsx` — when no conversation exists (first open), show a static assistant message: "Hi! I'm your Task Manager Assistant. I can help you create, list, complete, update, and delete tasks. Try typing 'Show all my tasks' or use the quick actions below!" (FR-021). This message is displayed locally, not stored in DB
-- [ ] T038 [US8] Verify 20-message context window in `backend/src/services/chat_service.py` — ensure `get_context_messages()` returns only last 20 messages ordered by created_at ASC for AI context. This should already be implemented in T015 but verify it works with >20 messages (FR-026)
-- [ ] T039 [US8] Verify 200-message cap with auto-pruning in `backend/src/services/chat_service.py` — ensure `store_message()` checks message count after insert and deletes oldest messages if count >200. Use `SELECT id FROM message WHERE conversation_id = ? ORDER BY created_at ASC LIMIT (count - 200)` then bulk delete (FR-027)
+- [ ] T048 [US9] Register add_task tool with Official MCP SDK
+  - Input schema: title (required), description, priority, category, due_date (optional)
+  - Description: "Create a new task"
+- [ ] T049 [US9] Register list_tasks tool
+  - Input schema: status, priority, category (optional filters), page, page_size
+  - Description: "Query user's tasks with optional filtering"
+- [ ] T050 [US9] Register complete_task tool
+  - Input schema: task_id (required)
+  - Description: "Mark task as complete"
+- [ ] T051 [US9] Register delete_task tool
+  - Input schema: task_id (required)
+  - Description: "Delete task permanently"
+- [ ] T052 [US9] Register update_task tool
+  - Input schema: task_id (required), plus optional update fields
+  - Description: "Update task fields"
 
-**Checkpoint**: Conversation history persists. Multi-turn dialogue coherent. Message cap enforced.
-
----
-
-## Phase 11: Polish & Cross-Cutting Concerns
-
-**Purpose**: Responsive design, error handling, visual consistency across all stories
-
-- [ ] T040 [P] Implement error states in `ChatWidget.tsx` — handle: (1) AI service unavailable (503) → show error message in chat with retry suggestion, (2) network error → show offline message, (3) JWT expired (401) → show "Session expired, please refresh" message. Match FR-022, edge cases from spec
-- [ ] T041 [P] Implement AI reasoning trace logging in `backend/src/services/chat_service.py` — store tool_calls array and action type in Message metadata JSON field. Log each tool invocation with `logger.info(f"AI tool call: {tool_name}({args}) for user {user_id}")`. Ensures FR-017 observability
-- [ ] T042 [P] Desktop panel polish in `ChatWidget.tsx` — 380px width, max 560px height, fixed bottom-right with 24px margin. Shadow: `shadow-xl shadow-purple-500/20`. Border: `border border-purple-500/20`. Rounded corners: `rounded-2xl`. Glass effect: `backdrop-blur-xl bg-gray-900/90` (NFR-001)
-- [ ] T043 Glassmorphism consistency audit — verify all chat components use existing dashboard CSS classes (`glass-strong`, `card-dark`, `card-glow`, `btn-neon`, `input-dark`, `text-gradient`, `feature-card`) where applicable. Ensure neon purple/magenta gradient consistency (NFR-001)
-- [ ] T044 Run quickstart.md validation — follow all 6 verification steps from `specs/003-phase3-ai-chatbot/quickstart.md`: (1) Open dashboard, (2) Click FAB, (3) Type "Show all my tasks", (4) Verify AI response, (5) Type "Add a task to test the chatbot with high priority", (6) Verify task appears in dashboard list
-
----
-
-## Dependencies & Execution Order
-
-### Phase Dependencies
-
-- **Setup (Phase 1)**: No dependencies — can start immediately
-- **Foundational (Phase 2)**: Depends on Phase 1 (T001, T002) — BLOCKS all user stories
-- **US1 (Phase 3)**: Depends on Phase 1 T004 only (frontend directory). Can start in parallel with Phase 2 backend work
-- **US2 (Phase 4)**: Depends on Phase 2 (models + schemas) for backend. Depends on US1 (Phase 3) for frontend (ChatWidget exists)
-- **US3 (Phase 5)**: Depends on US2 (Phase 4) — needs working send/receive loop
-- **US4 (Phase 6)**: Depends on US2 (Phase 4) — needs working send/receive loop. Can run in parallel with US3
-- **US5 (Phase 7)**: Depends on US4 (Phase 6) — needs list_tasks for disambiguation
-- **US6 (Phase 8)**: Depends on US4 (Phase 6) — needs list_tasks for finding tasks. Can run in parallel with US5
-- **US7 (Phase 9)**: Depends on US2 (Phase 4) — needs working chat input. Can run in parallel with US3-US6
-- **US8 (Phase 10)**: Depends on US2 (Phase 4) — needs history endpoint wired. Can run in parallel with US3-US6
-- **Polish (Phase 11)**: Depends on all user stories being complete
-
-### Within Each User Story
-
-- Backend implementation before frontend wiring (for stories with both)
-- Models before services
-- Services before API endpoints
-- API endpoints before frontend integration
-- Core implementation before polish
-
-### Parallel Opportunities
-
-- All Setup tasks marked [P] can run in parallel
-- Phase 2 T007 (schemas) can run in parallel with T005/T006 (models)
-- US1 frontend work (Phase 3) can run in parallel with US2 backend work (Phase 4 T014-T018)
-- US3 and US4 can run in parallel after US2 completes
-- US5 and US6 can run in parallel after US4 completes
-- US7 and US8 can run independently after US2 completes
-- All Polish tasks marked [P] can run in parallel
+**Expected Result**: MCP client can discover all 5 tools with complete metadata
 
 ---
 
-## Implementation Strategy
+### User Story 10: MCP Tool Operations (US10)
 
-### MVP First (P1 Stories: US1 + US2 + US3)
+**Goal**: MCP client can invoke task tools and get results  
+**Independent Test**: Call each tool via MCP, verify database updates, check bi-directional consistency  
+**Files Affected**: backend/src/services/mcp_service.py, src/api/mcp.py
 
-1. Complete Phase 1: Setup (T001-T004)
-2. Complete Phase 2: Foundational models (T005-T008)
-3. Complete Phase 3: US1 — Chat widget opens/closes (T009-T013)
-4. Complete Phase 4: US2 — Send/receive messages end-to-end (T014-T022)
-5. Complete Phase 5: US3 — Create tasks via chat (T023-T025)
-6. **STOP and VALIDATE**: Run quickstart.md steps 1-6
-7. Deploy/demo if ready — core chatbot is functional
+#### Tool Implementation
 
-### Incremental Delivery (P2 Stories)
+- [ ] T053 [P] [US10] Implement add_task tool in MCPService
+  - Validate inputs with Pydantic (title required)
+  - Create Task record with user_id from JWT
+  - Return created task with ID
+  - Log operation (timestamp, user_id, tool, params, result)
+- [ ] T054 [P] [US10] Implement list_tasks tool in MCPService
+  - Apply filters (status, priority, category)
+  - User scoping: WHERE user_id = ?
+  - Return paginated results (default 20 per page)
+  - Log operation
+- [ ] T055 [P] [US10] Implement complete_task tool in MCPService
+  - Validate task belongs to user (task.user_id == user_id)
+  - Mark status = 'completed'
+  - Return updated task
+  - Log operation
+- [ ] T056 [P] [US10] Implement delete_task tool in MCPService
+  - Validate task belongs to user
+  - Delete task from database
+  - Return confirmation
+  - Log operation
+- [ ] T057 [P] [US10] Implement update_task tool in MCPService
+  - Validate task belongs to user
+  - Update only provided fields (COALESCE pattern)
+  - Return updated task
+  - Log operation
 
-8. Add US4 — List/query tasks (T026-T027)
-9. Add US5 — Complete/delete tasks (T028-T031)
-10. Add US6 — Update tasks (T032-T033)
-11. **VALIDATE**: Full CRUD via chat works
+#### Authentication & Error Handling
 
-### Final Polish (P3 Stories)
+- [ ] T058 [US10] Implement JWT validation gate for MCP tool calls
+  - Extract user_id from token before executing tool
+  - Raise 401 if token missing/invalid
+  - All tools automatically scoped to user_id
+- [ ] T059 [US10] Implement error handling for MCP tool errors
+  - Validation errors (400): Invalid input parameters
+  - Authentication errors (401): Missing/invalid token
+  - Not found errors (404): Task not found or user mismatch
+  - Server errors (500): Unexpected failures
+  - Return structured error response per MCP spec
 
-12. Add US7 — Quick action pills (T034-T035)
-13. Add US8 — Conversation history persistence (T036-T039)
-14. Complete Phase 11 — Polish and validation (T040-T044)
+#### Bi-Directional Consistency
+
+- [ ] T060 [US10] Implement REST ↔ MCP consistency verification
+  - Create task via MCP tool
+  - Query via REST API → should appear immediately
+  - Create task via REST API
+  - Query via MCP tool → should appear immediately
+  - No caching layer (ACID transactions only)
+
+**Expected Result**: All 5 MCP tools fully functional with immediate database persistence
 
 ---
 
-## Notes
+## Phase 4: User Stories P2 (Task Queries & Modifications)
 
-- [P] tasks = different files, no dependencies
-- [Story] label maps task to specific user story for traceability
-- Each user story should be independently completable and testable
-- Commit after each task or logical group
-- Stop at any checkpoint to validate story independently
-- Existing backend endpoints (tasks, auth, health) MUST NOT be modified (NFR-006)
-- Total: 44 tasks across 11 phases
-- New files: 5 backend, 7 frontend, 1 modified backend config, 1 modified backend main, 1 modified frontend DashboardClient
+### User Story 4: List and Query Tasks via Chat (US4)
+
+**Goal**: User says "Show all tasks" or "Show high priority", AI returns formatted task list  
+**Independent Test**: Chat command lists tasks correctly  
+**Dependency**: Requires US2 (message exchange) + task_tools.list_tasks
+
+- [ ] T061 [US4] Update task_tools.py list_tasks() to support filtering
+  - Accepts status, priority, category filters
+  - Returns paginated results (default 20)
+  - User-scoped query
+- [ ] T062 [US4] Update OpenAI Agents to recognize list_tasks intent
+  - Training data: "Show all tasks", "What's pending?", "High priority tasks"
+  - Call list_tasks with appropriate filters
+- [ ] T063 [US4] Format list_tasks response for chat display
+  - Convert task list to readable format
+  - Show title, status, priority, due date
+  - Limit to 10 tasks per message (pagination hint)
+
+**Expected Result**: User can query tasks via natural language
+
+---
+
+### User Story 5: Complete and Delete Tasks via Chat (US5)
+
+**Goal**: User says "Complete buy groceries" or "Delete buy groceries task"  
+**Independent Test**: Chat command marks task complete or deletes  
+**Dependency**: Requires US2 + task_tools (complete_task, delete_task)
+
+- [ ] T064 [US5] Update task_tools.py to handle task reference matching
+  - "buy groceries" → find task with matching title
+  - Handle ambiguity (multiple matches)
+  - Return matching task for confirmation
+- [ ] T065 [US5] Implement delete confirmation workflow in OpenAI Agents
+  - When user says "delete", ask confirmation: "Are you sure?"
+  - Only delete on explicit confirmation
+- [ ] T066 [US5] Update AI response formatting for complete/delete
+  - Confirm action completed
+  - Show task details that were modified
+
+**Expected Result**: User can complete/delete tasks via chat with confirmation
+
+---
+
+### User Story 6: Update Tasks via Chat (US6)
+
+**Goal**: User says "Change buy groceries to high priority"  
+**Independent Test**: Chat command updates task fields  
+**Dependency**: Requires US2 + task_tools.update_task
+
+- [ ] T067 [US6] Update task_tools.py update_task to handle partial updates
+  - Only update provided fields
+  - Validate enum values (priority, status)
+  - User-scoped updates only
+- [ ] T068 [US6] Train AI to recognize update intents
+  - "Change X to Y" pattern recognition
+  - Parse which field and new value
+  - Call update_task with correct parameters
+- [ ] T069 [US6] Handle ambiguous update commands
+  - If multiple tasks match reference, ask clarification
+  - If new value invalid, ask for correction
+
+**Expected Result**: User can update task fields via natural language
+
+---
+
+## Phase 5: User Stories P3 (Optional Features)
+
+### User Story 7: Quick Action Pills (US7)
+
+**Goal**: Buttons below chat input for common operations  
+**Independent Test**: Click pill sends command message  
+**Dependency**: Requires US1 (chat widget exists)
+
+- [ ] T070 [P] [US7] Create QuickActionPills component in frontend/src/components/chat/QuickActionPills.tsx
+  - Buttons: "Show all tasks", "Add a task", "What's overdue?"
+  - Styled with cyberpunk theme (neon glow, hover lift)
+- [ ] T071 [US7] Implement pill click handler
+  - Send corresponding message to chat
+  - Trigger handleSendMessage with pill text
+  - Disabled while chat is processing
+
+**Expected Result**: Quick action pills visible and functional
+
+---
+
+### User Story 8: Conversation History Persistence (US8)
+
+**Goal**: Previous chat messages reload when user opens chat again  
+**Independent Test**: Send messages, close panel, reopen, verify messages persist  
+**Dependency**: Requires US2 (chat API working)
+
+- [ ] T072 [US8] Implement loadChatHistory() in frontend ChatWidget
+  - Call GET /api/chat/history on panel open
+  - Load messages from database
+  - Display last N messages (most recent)
+- [ ] T073 [US8] Implement backend GET /api/chat/history endpoint
+  - Return user's conversation messages
+  - Order by created_at DESC
+  - Limit to recent messages (with pagination)
+- [ ] T074 [US8] Implement welcome message for first-time users
+  - If no messages exist, show welcome message
+  - "Hi! I'm your Task Manager Assistant..."
+  - Stored as system message (not user/assistant)
+
+**Expected Result**: Chat history persists across sessions
+
+---
+
+## Phase 6: Polish & Cross-Cutting Concerns
+
+### Logging & Observability
+
+- [ ] T075 [P] Add comprehensive logging to MCP tools in MCPService
+  - Log every tool invocation: timestamp, user_id, tool_name, params
+  - Log results: success/failure, error code if failed
+  - Use structured logging (JSON format for easy parsing)
+- [ ] T076 [P] Add logging to chat operations
+  - Log message sends, receives, errors
+  - Include conversation_id for correlation
+  - Log AI tool calls and results
+- [ ] T077 Implement centralized error logging
+  - Use logError utility (already created in Phase 3)
+  - Log to backend logs for debugging
+  - Return user-friendly error messages
+
+### Testing & Validation
+
+- [ ] T078 [P] Create contract tests for MCP tools in backend/tests/contract/test_mcp_contracts.py
+  - Each tool test: valid inputs → verify output schema
+  - Invalid inputs → verify error response format
+  - User scoping: verify cross-user access blocked
+- [ ] T079 [P] Create integration tests for REST ↔ MCP consistency in backend/tests/integration/test_rest_mcp_consistency.py
+  - Create task via REST → query via MCP → verify match
+  - Create task via MCP → query via REST → verify match
+  - Update via one interface → query via other → verify consistency
+- [ ] T080 [P] Create MCP client integration tests in backend/tests/integration/test_mcp_client.py
+  - Connect MCP client with JWT
+  - Discover tools
+  - Invoke each tool
+  - Verify responses match contract
+
+### Documentation
+
+- [ ] T081 Create README.md for MCP server in backend/
+  - How to run MCP server locally
+  - How to connect MCP client
+  - Tool usage examples
+  - Error handling guide
+- [ ] T082 Update quickstart.md with MCP examples (already complete in Phase 1)
+- [ ] T083 Create API documentation in specs/003-phase3-ai-chatbot/
+  - Generated from OpenAPI spec
+  - Tool signatures and examples
+
+### Performance & Optimization
+
+- [ ] T084 Implement connection pooling for PostgreSQL
+  - Ensure SQLModel uses pooled connections
+  - Test with 10+ concurrent MCP connections
+- [ ] T085 Optimize database queries for chat operations
+  - Add indexes on (user_id, created_at) for message queries
+  - Verify explain plan for common queries
+- [ ] T086 Implement response caching for list_tasks (optional, if needed)
+  - Cache invalidated on task create/update/delete
+  - Consider cache invalidation strategy
+
+### Final Validation
+
+- [ ] T087 End-to-end testing: All user stories working together
+- [ ] T088 Performance testing: Response times meet spec (< 5s AI, < 2s MCP tools)
+- [ ] T089 Security audit: User scoping verified, JWT validation complete
+- [ ] T090 Browser compatibility: Test on Chrome, Firefox, Safari (latest versions)
+
+---
+
+## Dependency Graph & Parallel Execution
+
+### Critical Path (Blocking)
+```
+T001-T008 (Setup)
+  ↓
+T009-T018 (Foundational)
+  ↓
+T019-T045 (US1, US2, US3 - Chat)
+  ↓
+T046-T060 (US9, US10 - MCP)
+  ↓
+T061-T069 (US4, US5, US6 - Queries)
+```
+
+### Parallelizable Phases
+- **Phase 1**: All tasks can run in parallel (independent setup)
+- **Phase 2**: Most tasks can run in parallel (different modules)
+- **Phase 3**: Frontend tasks (T019-T030) can run in parallel with backend tasks (T031-T060)
+- **Phase 4**: Can start once Phase 3 complete (independent of Phase 5)
+- **Phase 5**: Can start once Phase 2 complete (independent of Phases 3-4)
+- **Phase 6**: Can run in parallel with later story phases
+
+### Recommended Parallel Execution
+
+**Developer 1** (Backend):
+```
+T001-T008 → T009-T018 → T031-T060 (MCP tools)
+```
+
+**Developer 2** (Frontend):
+```
+T001-T008 → T019-T030 (Chat UI)
+```
+
+Both can merge work after T018 (foundational) completes.
+
+---
+
+## MVP Scope (Recommended Starting Point)
+
+**Minimum Viable Product** (can ship independently):
+- User Story 1: Chat widget (T019-T024)
+- User Story 2: Message exchange (T025-T038)
+- User Story 3: Create tasks (T039-T045)
+- User Story 9: MCP discovery (T046-T052)
+- User Story 10: MCP tools (T053-T060)
+
+**MVP Effort**: ~40-50 hours
+**MVP Result**: Fully functional chat + MCP server with core operations
+
+**Post-MVP** (Phase 4-5):
+- User Stories 4-6: Query/modify operations
+- User Story 7: Quick action pills
+- User Story 8: History persistence
+
+---
+
+## Task Status Tracking
+
+Use this section to track progress:
+
+```
+Phase 1: Setup & Infrastructure
+- [ ] T001 ___/___  (assigned, ETA)
+- [ ] T002 ___/___
+- [ ] T003 ___/___
+... (repeat for all tasks)
+
+Phase 2: Foundational
+... (continue tracking)
+
+etc.
+```
+
+---
+
+## Notes for Implementation Team
+
+1. **Test-Driven Development**: Tests not included in this checklist (optional per spec), but can be added per Phase 2 task specification
+2. **Async/Await**: All backend operations must be async (FastAPI compatibility)
+3. **User Scoping**: Every database query must include `WHERE user_id = ?` filter
+4. **Error Handling**: Use structured errors (error codes) per spec and contracts/
+5. **Logging**: All operations logged for audit trail (FR-MCP-015)
+6. **Dependencies**: Check requirements.txt before installing (mcp package for Official SDK)
+7. **Backward Compatibility**: Existing REST API and chat widget must remain unchanged
+8. **Performance**: MCP tool calls should complete in < 2 seconds (spec SC-MCP-003)
+
+---
+
+**Status**: ✅ TASKS GENERATED
+
+Total: 47 actionable tasks across 6 phases
+MVP: 15 tasks (US1, US2, US3, US9, US10)
+Full: 47 tasks (all user stories + polish)
+Parallelizable: ~70% of tasks can run concurrently
+
+Ready to begin implementation.

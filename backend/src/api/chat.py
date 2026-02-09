@@ -175,7 +175,7 @@ async def get_chat_history(
                 id=msg.id,
                 role=msg.role,
                 content=msg.content,
-                metadata=msg.metadata,  # Uses the property to deserialize JSON
+                metadata_dict=msg.get_metadata(),  # Deserialize JSON to dict
                 created_at=msg.created_at,
             )
             for msg in messages

@@ -1,9 +1,16 @@
-# Feature Specification: Todo AI Chatbot - Cyberpunk UI/UX
+# Feature Specification: Todo AI Chatbot - Cyberpunk UI/UX with MCP Server Integration
 
 **Feature Branch**: `003-phase3-ai-chatbot`
 **Created**: 2026-02-08
+**Updated**: 2026-02-09 (Added MCP server architecture)
 **Status**: Draft
-**Input**: User description: "Floating AI assistant to manage tasks via natural language using MCP tools; cyberpunk theme, maintain existing backend functionality"
+**Input**: User description: "Build an AI-powered conversational Todo chatbot using MCP (Model Context Protocol) server architecture. Implement MCP server using Official MCP SDK with stateless tools (add_task, list_tasks, complete_task, delete_task, update_task). Maintain all existing application functionality including chat history, message storage, task persistence, and JWT authentication. Preserve existing chat interface, AI agent orchestration with OpenAI Agents SDK, SQLModel ORM with Neon PostgreSQL, and Better Auth integration."
+
+## Overview
+
+This specification covers Phase 3: AI Chatbot Integration with MCP Server Architecture. The feature combines an interactive chat widget (frontend) with an AI agent backed by both direct OpenAI Agents SDK integration AND a new MCP (Model Context Protocol) server. The MCP server exposes task operations as stateless tools that can be consumed by any MCP-compatible client, while the chat widget uses the existing AI agent for multi-turn conversational reasoning.
+
+**Key addition in this update**: MCP server implementation using Official MCP SDK to expose task operations as standards-based tools, enabling external integration while maintaining all existing chat and database functionality.
 
 ## Clarifications
 
@@ -160,6 +167,51 @@ Chat conversations are persisted per user so that when a user reopens the chat p
 - What happens when a task operation fails (e.g., database error)? The AI communicates the failure clearly and suggests retrying.
 - What happens when the chat panel is open and the user creates/modifies a task via the dashboard UI? The chat does not need to reflect this change in real-time, but the next list command should return updated data.
 
+---
+
+### User Story 9 - MCP Server Availability and Tool Discovery (Priority: P1)
+
+An external MCP client (or future AI agent) can discover and invoke task operation tools via the MCP protocol. The MCP server exposes task CRUD operations as stateless tools that can be called with proper authentication, enabling ecosystem integration.
+
+**Why this priority**: MCP server is foundational infrastructure that enables extensibility beyond the chat widget. It must be available and discoverable from day one.
+
+**Independent Test**: Can be tested by connecting an MCP client, discovering available tools, and verifying tool metadata matches specifications.
+
+**Acceptance Scenarios**:
+
+1. **Given** the MCP server is running, **When** an MCP client sends a tools/list discovery request, **Then** the server responds with all available task operation tools (add_task, list_tasks, complete_task, delete_task, update_task) with complete metadata (name, description, input schema).
+2. **Given** a tool has been discovered, **When** the MCP client inspects the tool, **Then** the tool schema includes input parameters, required fields, type information, and description of each parameter.
+3. **Given** the MCP server receives a tool call, **When** the call includes valid authentication credentials, **Then** the tool executes and returns a structured result.
+4. **Given** the MCP server receives a tool call without authentication, **When** the server processes it, **Then** it returns an authentication error (HTTP 401 or MCP-specific auth error).
+5. **Given** multiple MCP clients connect to the server, **When** they call tools concurrently, **Then** all calls are processed correctly with proper user scoping (no cross-user data leakage).
+
+---
+
+### User Story 10 - MCP Tool Operations (Priority: P1)
+
+The MCP server exposes five core task operation tools as stateless MCP resources that can be called by any MCP-compatible client with proper authentication.
+
+**Why this priority**: These tools are the core value of the MCP server; without them, external integration is impossible.
+
+**Independent Test**: Can be tested by calling each tool via MCP and verifying it performs the expected operation and reflects changes in the dashboard.
+
+**Acceptance Scenarios**:
+
+1. **Given** an authenticated MCP client, **When** the client calls the `add_task` tool with task details (title, description, priority, category, due_date), **Then** the tool creates the task in the database and returns the created task with all fields including ID.
+2. **Given** an authenticated MCP client, **When** the client calls the `list_tasks` tool with optional filters (status, priority, category), **Then** the tool returns all tasks matching the filters scoped to the authenticated user with pagination support.
+3. **Given** a task exists in the database, **When** an authenticated MCP client calls the `complete_task` tool with a task ID, **Then** the tool marks the task as complete and returns the updated task.
+4. **Given** a task exists, **When** an authenticated MPC client calls the `delete_task` tool with a task ID, **Then** the tool soft-deletes the task (or hard-deletes based on system policy) and confirms deletion.
+5. **Given** a task exists, **When** an authenticated MCP client calls the `update_task` tool with a task ID and update fields (title, priority, due_date, description, category, status), **Then** the tool updates only the provided fields and returns the updated task.
+
+---
+
+### Edge Case: MCP Specific
+
+- What happens when an MCP client sends an invalid tool call (missing required parameters)? The server returns a structured error response with parameter validation details.
+- What happens when an MCP client connection drops during a tool execution? The operation completes atomically; no partial state is left behind.
+- What happens when the MCP server needs to be restarted? Existing WebSocket connections gracefully close; clients must reconnect.
+- What happens when an MCP client requests a tool that doesn't exist? The server returns a "tool not found" error without crashing.
+
 ## Requirements *(mandatory)*
 
 ### Functional Requirements
@@ -192,6 +244,24 @@ Chat conversations are persisted per user so that when a user reopens the chat p
 - **FR-026**: System MUST use a sliding context window of the last 20 messages (user + assistant) when sending conversation history to the AI for multi-turn dialogue coherence.
 - **FR-027**: System MUST enforce a maximum of 200 stored messages per user conversation; when the cap is reached, the oldest messages MUST be pruned automatically.
 
+### MCP Server Requirements
+
+- **FR-MCP-001**: System MUST implement an MCP (Model Context Protocol) server using the Official MCP SDK that exposes task operations as stateless tools.
+- **FR-MCP-002**: MCP server MUST implement the `add_task` tool that accepts parameters: title (required string), description (optional string), priority (optional: high|medium|low, default: medium), category (optional string), due_date (optional ISO 8601 date string).
+- **FR-MCP-003**: MCP server MUST implement the `list_tasks` tool that accepts optional filters: status (optional: pending|completed, default: pending), priority (optional: high|medium|low), category (optional string). Returns paginated results (default 20 per page).
+- **FR-MCP-004**: MCP server MUST implement the `complete_task` tool that accepts a task_id (required integer) and marks the corresponding task as complete, returning the updated task.
+- **FR-MCP-005**: MCP server MUST implement the `delete_task` tool that accepts a task_id (required integer) and deletes the task, returning a confirmation response.
+- **FR-MCP-006**: MCP server MUST implement the `update_task` tool that accepts a task_id (required integer) and update fields (title, description, priority, category, due_date - all optional), updating only the provided fields and returning the updated task.
+- **FR-MCP-007**: MCP server MUST use the Official MCP SDK for protocol compliance, tool discovery (tools/list endpoint), and MCP transport.
+- **FR-MCP-008**: MCP server MUST scope all tool operations to the authenticated user using the same JWT token validation as existing API endpoints.
+- **FR-MCP-009**: MCP server MUST expose tool discovery via MCP's tools/list endpoint, returning metadata for all available tools including name, description, and input_schema for each tool.
+- **FR-MCP-010**: MCP server MUST use stateless tool design: each tool call contains all context needed for execution; no server-side session state for tool operations.
+- **FR-MCP-011**: MCP server MUST return structured JSON responses for all tool calls, including success and error cases, following MCP response conventions.
+- **FR-MCP-012**: MCP server MUST persist all tool operation results to the same database (Neon PostgreSQL) used by the chat and task API, ensuring consistency.
+- **FR-MCP-013**: MCP server MUST NOT interfere with existing REST API endpoints; both MCP and REST interfaces MUST be able to operate simultaneously and access the same data.
+- **FR-MCP-014**: MCP server MUST handle authentication failures gracefully, returning appropriate MCP error responses for missing, invalid, or expired JWT tokens.
+- **FR-MCP-015**: MCP server MUST log all tool invocations with timestamp, user ID, tool name, parameters (sanitized), and result status for debugging and auditing.
+
 ### Non-Functional Requirements
 
 - **NFR-001**: Chat panel styling MUST be visually consistent with the existing cyberpunk dashboard theme (dark background, neon purple/magenta accents, glassmorphism, soft glow, rounded edges).
@@ -205,7 +275,8 @@ Chat conversations are persisted per user so that when a user reopens the chat p
 
 - **Conversation**: Represents a chat session between a user and the AI assistant. Key attributes: unique identifier, associated user, creation timestamp. Each user has one active conversation. Maximum 200 messages retained; oldest pruned when cap reached.
 - **Message**: A single chat message within a conversation. Key attributes: unique identifier, conversation reference, role (user or assistant), content text, timestamp, optional metadata (tool calls, reasoning traces). AI context uses a sliding window of the last 20 messages.
-- **Task** *(existing)*: The existing task entity with title, description, priority, category, due date, completion status. Referenced by the AI for all task operations.
+- **Task** *(existing)*: The existing task entity with title, description, priority, category, due date, completion status. Referenced by the AI for all task operations and exposed via MCP tools.
+- **MCP Tool Call** *(new, optional logging)*: Optional record of MCP tool invocations for auditing. Key attributes: tool name, parameters, user, timestamp, result status. Used for debugging and compliance logging.
 
 ## Assumptions
 
@@ -217,6 +288,17 @@ Chat conversations are persisted per user so that when a user reopens the chat p
 - The chat panel does not need real-time synchronization with dashboard task changes; the next query reflects the latest state.
 - The FAB is not shown on non-dashboard pages (signin, signup, landing).
 - Mobile breakpoint for bottom-sheet behavior is 768px (standard tablet/phone breakpoint).
+
+### MCP-Specific Assumptions
+
+- The MCP server runs on the same backend service as the REST API (no separate microservice).
+- MCP server uses WebSocket transport as primary (fallback to HTTP if needed) following Official MCP SDK defaults.
+- MCP server reuses the same JWT authentication mechanism as existing REST endpoints (same secret, same validation).
+- MCP tool operations are fully stateless; all context comes from request parameters and authenticated user identity.
+- MCP server operations modify the same PostgreSQL database as chat and task REST APIs; no separate data stores.
+- MCP tool results are immediately consistent (no eventual consistency needed for MVP).
+- MCP server does not require new database tables; all results are stored in existing task tables.
+- External MCP clients are responsible for token refresh; MCP server does not issue new tokens.
 
 ## Success Criteria *(mandatory)*
 
@@ -232,3 +314,16 @@ Chat conversations are persisted per user so that when a user reopens the chat p
 - **SC-008**: Chat panel animations run at 60fps with no visible jank on mid-range devices.
 - **SC-009**: The AI correctly identifies and executes the intended task operation for at least 90% of well-formed natural language commands.
 - **SC-010**: Conversation history persists across panel open/close cycles for the same user session.
+
+### MCP Server Success Criteria
+
+- **SC-MCP-001**: MCP server successfully starts and is discoverable at the configured endpoint (e.g., ws://localhost:3001/mcp or configurable URL).
+- **SC-MCP-002**: MCP client can discover all 5 core tools (add_task, list_tasks, complete_task, delete_task, update_task) via tools/list endpoint within 500ms.
+- **SC-MCP-003**: Each MCP tool returns results within 2 seconds under normal network conditions for simple operations.
+- **SC-MCP-004**: MCP tool calls with valid JWT tokens succeed 100% of the time for well-formed requests.
+- **SC-MCP-005**: MCP tool calls without authentication or with expired tokens are rejected 100% of the time with appropriate error responses.
+- **SC-MCP-006**: Task data created/modified via MCP tools is immediately queryable via REST API and visible in dashboard without delay.
+- **SC-MCP-007**: Task data created/modified via REST API is immediately queryable via MCP tools without delay (bi-directional consistency).
+- **SC-MCP-008**: Existing REST API task endpoints continue to function with zero regressions after MCP server integration.
+- **SC-MCP-009**: All MCP tool operations are logged with user ID, tool name, and result status; no tool execution occurs without logging.
+- **SC-MCP-010**: MCP server handles 10+ concurrent client connections with no resource leaks or connection state corruption.

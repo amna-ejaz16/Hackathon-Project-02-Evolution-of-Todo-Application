@@ -32,39 +32,65 @@ class ChatService:
     """
 
     # Agent system instructions (FR-018: constrain to task management only)
+    # Combined instructions for T024, T027, T031, T033
     AGENT_INSTRUCTIONS = """You are a task management assistant that helps users manage their todo tasks.
 
-You can help users:
-- List their tasks (all tasks, pending, completed, by priority, by category)
-- Create new tasks with details (title, description, priority, category, due date)
-- Complete or uncomplete tasks
-- Update task details (title, description, priority, category, due date)
-- Delete tasks
+CAPABILITIES:
+You can help users create, list, complete, uncomplete, update, and delete tasks.
 
+TASK CREATION (T024):
 When a user wants to create a task:
 - Extract the title, description, priority (low/medium/high), category, and due date from their message
-- If the title is unclear or missing, ask for clarification
+- If the title is unclear or missing, ask for clarification before proceeding
 - Apply reasonable defaults: medium priority, no category, no due date
-- Always confirm what you created with full details
+- Always confirm what you created with full details (title, priority, category, due date)
+- Example: "I've created a new task 'Buy groceries' with high priority, due Friday. Is there anything else you'd like to do?"
 
+LISTING TASKS (T027):
 When a user asks to see tasks:
-- Use the list_tasks tool with appropriate filters
-- Format the response clearly with task status, priority, and due dates
-- If no tasks match, suggest creating one
+- Use the list_tasks tool with appropriate filters (status, priority, category)
+- Format the response as a clear, numbered list showing:
+  * Task status (complete/pending)
+  * Priority level with emoji indicators
+  * Task title
+  * Due date if set
+  * Category if set
+- If no tasks match the filters, suggest creating one
+- Examples of user queries: "show all tasks", "list pending high priority tasks", "what's due today"
 
-For completing, updating, or deleting tasks:
-- First identify the task by title using list_tasks
-- If multiple matches, ask the user to specify which one
+COMPLETING/UNCOMPLETING TASKS (T031):
+When a user wants to complete or uncomplete a task:
+- First use list_tasks to find matching tasks by searching title keywords
+- If exactly one match is found, proceed with the operation (complete_task or uncomplete_task)
+- If multiple matches are found, list them with their IDs and ask the user to specify which one
+- If no match is found, inform the user and offer to list all their tasks
+- Example: "I found multiple tasks matching 'report': 1. Write monthly report, 2. Submit expense report. Which one would you like to complete?"
+
+DELETING TASKS (T031):
+When a user wants to delete a task:
+- First use list_tasks to find matching tasks by title keywords
+- If exactly one match is found, confirm before proceeding: "Are you sure you want to delete '[task title]'?"
+- Wait for explicit confirmation (yes/confirm/delete) before calling delete_task
+- If multiple matches, list them and ask which one to delete
 - If no match, inform the user and offer to list their tasks
-- For delete operations, always confirm the action
+
+UPDATING TASKS (T033):
+When a user wants to update a task:
+- First find the task using list_tasks by searching title keywords
+- If found, call update_task with ONLY the fields that need changing (title, description, priority, category, due_date)
+- Do not pass fields that should remain unchanged
+- Confirm what was updated with the new values
+- If multiple matches, ask user to specify which task
+- Example: "I've updated 'Buy groceries' to high priority with due date Friday, Feb 14."
 
 IMPORTANT CONSTRAINTS:
-- You can ONLY perform task-related operations
-- You cannot access external data or perform non-task actions
-- Always be helpful and concise
-- If you're unsure, ask clarifying questions
+- You can ONLY perform task-related operations (create, list, complete, uncomplete, update, delete)
+- You cannot access external data, browse the web, or perform non-task actions
+- Always be helpful, concise, and conversational
+- If you're unsure about what the user wants, ask clarifying questions
+- Always reference tasks by their title and ID when confirming actions
 
-Be friendly, helpful, and conversational while staying focused on task management."""
+Be friendly and natural while staying focused on task management."""
 
     @staticmethod
     def get_or_create_conversation(user_id: str, session: Session) -> Conversation:
@@ -165,9 +191,9 @@ Be friendly, helpful, and conversational while staying focused on task managemen
             content=content
         )
 
-        # Set metadata using the property setter (handles JSON serialization)
+        # Set metadata using the method (handles JSON serialization)
         if metadata:
-            message.metadata = metadata
+            message.set_metadata(metadata)
 
         session.add(message)
         session.commit()
@@ -234,24 +260,30 @@ Be friendly, helpful, and conversational while staying focused on task managemen
             Exception: If agent execution fails or OpenAI API errors occur
         """
         try:
+            logger.info(f"[CONVERSATION LIFECYCLE] Processing message for user_id={user_id}, message_length={len(user_message)}")
+
             # Step 1: Get or create conversation
             conversation = ChatService.get_or_create_conversation(user_id, session)
             conversation_id = conversation.id
+            logger.info(f"[CONVERSATION LIFECYCLE] Using conversation_id={conversation_id} for user_id={user_id}")
 
             # Step 2: Store user message
-            ChatService.store_message(
+            user_msg = ChatService.store_message(
                 conversation_id=conversation_id,
                 role="user",
                 content=user_message,
                 metadata=None,
                 session=session
             )
+            logger.info(f"[MESSAGE STORAGE] Stored user message message_id={user_msg.id}, conversation_id={conversation_id}, content_length={len(user_message)}")
 
             # Step 3: Fetch context (last 20 messages for AI)
             context_messages = ChatService.get_context_messages(conversation_id, session, limit=20)
+            logger.info(f"[CONVERSATION LIFECYCLE] Fetched {len(context_messages)} context messages for conversation_id={conversation_id}, user_id={user_id}")
 
             # Step 4: Create task tools bound to this user
             tools = create_task_tools(user_id=user_id, session=session)
+            logger.info(f"[AGENT EXECUTION] Created {len(tools)} task tools for user_id={user_id}")
 
             # Step 5: Create agent with tools and instructions
             agent = Agent(
@@ -262,7 +294,7 @@ Be friendly, helpful, and conversational while staying focused on task managemen
                 # Override with model="gpt-4o-mini" for cost savings if needed
             )
 
-            logger.info(f"Created agent with {len(tools)} tools for user {user_id}")
+            logger.info(f"[AGENT EXECUTION] Created agent with instructions_length={len(ChatService.AGENT_INSTRUCTIONS)}, tools_count={len(tools)}, user_id={user_id}")
 
             # Step 6: Run agent with context
             # The Runner.run() method handles the conversation context and tool execution
@@ -271,44 +303,117 @@ Be friendly, helpful, and conversational while staying focused on task managemen
             # Build full conversation context including the new user message
             full_context = context_messages + [{"role": "user", "content": user_message}]
 
+            logger.info(f"[AGENT EXECUTION] Running agent with context_message_count={len(full_context)}, user_id={user_id}, conversation_id={conversation_id}")
+
             # Execute agent
             result = runner.run(messages=full_context)
 
-            logger.info(f"Agent execution completed for user {user_id}")
+            logger.info(f"[AGENT EXECUTION] Agent execution completed, user_id={user_id}, conversation_id={conversation_id}")
 
             # Step 7: Extract response and metadata
-            # The result contains the assistant's response and any tool calls
-            assistant_response = result.get("response", "I'm sorry, I couldn't process that request.")
+            # The OpenAI Agents SDK Runner.run() returns a Response object
+            # Access the final message content from the result
+            assistant_response = "I'm sorry, I couldn't process that request."
 
-            # Extract metadata (tool calls, action type)
+            if hasattr(result, 'messages') and result.messages:
+                # Get the last assistant message
+                for msg in reversed(result.messages):
+                    if msg.role == "assistant" and msg.content:
+                        assistant_response = msg.content
+                        logger.info(f"[AGENT EXECUTION] Extracted assistant response, length={len(assistant_response)}, user_id={user_id}")
+                        break
+            elif isinstance(result, dict):
+                # Fallback for dict-like response
+                assistant_response = result.get("response", assistant_response)
+                logger.warning(f"[AGENT EXECUTION] Agent result was dict-like (unexpected format), user_id={user_id}")
+            else:
+                logger.warning(f"[AGENT EXECUTION] Could not extract assistant response from result, user_id={user_id}, result_type={type(result)}")
+
+            # T025: Parse tool calls from agent result to determine action type
+            action = "conversation"  # Default action
+            task_id = None
+            tool_calls_metadata = []
+
+            # Extract tool calls from result messages
+            if hasattr(result, 'messages'):
+                for msg in result.messages:
+                    if msg.role == "assistant" and hasattr(msg, 'tool_calls') and msg.tool_calls:
+                        for tool_call in msg.tool_calls:
+                            tool_name = tool_call.function.name if hasattr(tool_call.function, 'name') else ""
+                            tool_args_str = tool_call.function.arguments if hasattr(tool_call.function, 'arguments') else ""
+
+                            # Parse arguments to extract task_id if present
+                            tool_args = {}
+                            try:
+                                tool_args = json.loads(tool_args_str) if tool_args_str else {}
+                            except json.JSONDecodeError:
+                                logger.warning(f"[TOOL CALL TRACKING] Failed to parse tool arguments for tool={tool_name}, user_id={user_id}, args_str={tool_args_str[:100]}")
+
+                            # Log tool call details
+                            logger.info(f"[TOOL CALL TRACKING] AI tool call: tool={tool_name}, arguments={tool_args}, user_id={user_id}, conversation_id={conversation_id}")
+
+                            # Store tool call for metadata
+                            tool_calls_metadata.append({
+                                "name": tool_name,
+                                "arguments": tool_args
+                            })
+
+                            # T025: Map tool calls to action types based on contract/chat-api.yaml
+                            # Priority given to task modification actions over list operations
+                            if tool_name == "add_task" and action == "conversation":
+                                action = "task_created"
+                                logger.info(f"[ACTION DETECTION] Detected action=task_created, title={tool_args.get('title')}, priority={tool_args.get('priority')}, user_id={user_id}")
+                                # Extract task_id from the returned task object if available
+                                # Note: The tool returns a string, but we'd need to parse it
+                                # For now, we'll rely on the frontend refetching the task list
+                            elif tool_name == "update_task" and action not in ["task_created", "task_deleted"]:
+                                action = "task_updated"
+                                task_id = tool_args.get("task_id")
+                                logger.info(f"[ACTION DETECTION] Detected action=task_updated, task_id={task_id}, fields={list(tool_args.keys())}, user_id={user_id}")
+                            elif tool_name == "complete_task" and action not in ["task_created", "task_updated", "task_deleted"]:
+                                action = "task_completed"
+                                task_id = tool_args.get("task_id")
+                                logger.info(f"[ACTION DETECTION] Detected action=task_completed, task_id={task_id}, user_id={user_id}")
+                            elif tool_name == "uncomplete_task" and action not in ["task_created", "task_updated", "task_deleted"]:
+                                action = "task_uncompleted"
+                                task_id = tool_args.get("task_id")
+                                logger.info(f"[ACTION DETECTION] Detected action=task_uncompleted, task_id={task_id}, user_id={user_id}")
+                            elif tool_name == "delete_task" and action not in ["task_created", "task_updated"]:
+                                action = "task_deleted"
+                                task_id = tool_args.get("task_id")
+                                logger.info(f"[ACTION DETECTION] Detected action=task_deleted, task_id={task_id}, user_id={user_id}")
+                            elif tool_name == "list_tasks" and action == "conversation":
+                                action = "tasks_listed"
+                                filters = {k: v for k, v in tool_args.items() if v is not None}
+                                logger.info(f"[ACTION DETECTION] Detected action=tasks_listed, filters={filters}, user_id={user_id}")
+
+            # Log summary of action detection
+            if tool_calls_metadata:
+                logger.info(f"[ACTION DETECTION] Final action determination: action={action}, task_id={task_id}, tools_executed={len(tool_calls_metadata)}, user_id={user_id}, conversation_id={conversation_id}")
+            else:
+                logger.info(f"[ACTION DETECTION] No tool calls detected, action={action}, user_id={user_id}, conversation_id={conversation_id}")
+
+            # Build metadata for storage
             metadata = {
-                "tool_calls": result.get("tool_calls", []),
-                "action": "conversation",  # Default action
+                "tool_calls": tool_calls_metadata,
+                "action": action,
             }
 
-            # Determine action type from tool calls (will be enhanced in T025)
-            action = None
-            task_id = None
-
-            if metadata["tool_calls"]:
-                # Extract action from first tool call (simplified for T015)
-                first_tool = metadata["tool_calls"][0] if metadata["tool_calls"] else None
-                if first_tool:
-                    tool_name = first_tool.get("name", "")
-                    if tool_name == "list_tasks":
-                        action = "tasks_listed"
-                    # Additional tool mappings will be added in US3-US6
+            if task_id:
+                metadata["task_id"] = task_id
 
             # Step 8: Store assistant message
-            ChatService.store_message(
+            assistant_msg = ChatService.store_message(
                 conversation_id=conversation_id,
                 role="assistant",
                 content=assistant_response,
                 metadata=metadata,
                 session=session
             )
+            logger.info(f"[MESSAGE STORAGE] Stored assistant message message_id={assistant_msg.id}, conversation_id={conversation_id}, content_length={len(assistant_response)}, action={action}, task_id={task_id}")
 
             # Step 9: Return response
+            logger.info(f"[CONVERSATION LIFECYCLE] Completed message processing for user_id={user_id}, conversation_id={conversation_id}, action={action}, task_id={task_id}")
             return ChatResponse(
                 response=assistant_response,
                 conversation_id=conversation_id,
@@ -317,7 +422,13 @@ Be friendly, helpful, and conversational while staying focused on task managemen
             )
 
         except Exception as e:
-            logger.error(f"Error processing message for user {user_id}: {type(e).__name__}: {e}")
+            # Log error with full stack trace
+            logger.error(
+                f"[ERROR] Exception during message processing: user_id={user_id}, "
+                f"conversation_id={conversation.id if 'conversation' in locals() else 'unknown'}, "
+                f"error_type={type(e).__name__}, error_message={str(e)}",
+                exc_info=True
+            )
 
             # Return error response to user
             error_response = ChatResponse(
@@ -330,14 +441,15 @@ Be friendly, helpful, and conversational while staying focused on task managemen
             # Try to store error message if conversation exists
             if 'conversation' in locals():
                 try:
-                    ChatService.store_message(
+                    error_msg = ChatService.store_message(
                         conversation_id=conversation.id,
                         role="assistant",
                         content=error_response.response,
                         metadata={"error": str(e)},
                         session=session
                     )
+                    logger.info(f"[MESSAGE STORAGE] Stored error message message_id={error_msg.id}, conversation_id={conversation.id}, user_id={user_id}")
                 except Exception as store_error:
-                    logger.error(f"Failed to store error message: {store_error}")
+                    logger.error(f"[ERROR] Failed to store error message: user_id={user_id}, conversation_id={conversation.id}, error={store_error}", exc_info=True)
 
             raise

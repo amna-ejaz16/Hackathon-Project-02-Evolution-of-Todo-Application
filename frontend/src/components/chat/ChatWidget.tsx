@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import { motion, AnimatePresence, PanInfo } from 'framer-motion'
 import { api } from '@/lib/api'
+import { logError, extractErrorDetails } from '@/lib/errorLogger'
 import ChatHeader from './ChatHeader'
 import ChatMessages from './ChatMessages'
 import ChatInput from './ChatInput'
@@ -47,6 +48,14 @@ const WELCOME_MESSAGE: Message = {
   created_at: new Date().toISOString(),
 }
 
+// Error message templates
+const ERROR_MESSAGES = {
+  SERVICE_UNAVAILABLE: "I'm having trouble connecting right now. Please try again in a moment.",
+  NETWORK_ERROR: "Connection lost. Please check your internet and try again.",
+  SESSION_EXPIRED: "Session expired, please refresh the page.",
+  GENERIC: "Sorry, something went wrong. Please try again.",
+} as const
+
 export default function ChatWidget({ onTaskChange }: ChatWidgetProps) {
   const [isOpen, setIsOpen] = useState(false)
   const [messages, setMessages] = useState<Message[]>([])
@@ -81,7 +90,11 @@ export default function ChatWidget({ onTaskChange }: ChatWidgetProps) {
 
       setHistoryLoaded(true)
     } catch (error) {
-      console.error('Error loading chat history:', error)
+      // Log error with full details
+      logError(error, {
+        action: 'loadChatHistory',
+        timestamp: new Date().toISOString(),
+      })
       // On error, show welcome message
       setMessages([WELCOME_MESSAGE])
       setHistoryLoaded(true)
@@ -130,11 +143,42 @@ export default function ChatWidget({ onTaskChange }: ChatWidgetProps) {
         onTaskChange()
       }
     } catch (error) {
-      console.error('Error sending message:', error)
+      // Log error with full details using error utility
+      const errorDetails = logError(error, {
+        action: 'sendMessage',
+        conversationId,
+        timestamp: new Date().toISOString(),
+      })
+
+      let errorContent = ERROR_MESSAGES.GENERIC
+      let shouldSuggestRefresh = false
+
+      // Determine error type and set appropriate message
+      const status = errorDetails.status
+
+      if (status === 503) {
+        // Service unavailable - suggest retry
+        errorContent = ERROR_MESSAGES.SERVICE_UNAVAILABLE
+      } else if (status === 401) {
+        // Session expired - suggest refresh
+        errorContent = ERROR_MESSAGES.SESSION_EXPIRED
+        shouldSuggestRefresh = true
+      } else if (
+        errorDetails.type === 'NetworkError' ||
+        errorDetails.type === 'TypeError' ||
+        errorDetails.code === 'ERR_NETWORK'
+      ) {
+        // Network connectivity issue
+        errorContent = ERROR_MESSAGES.NETWORK_ERROR
+      }
+
+      // Append error message with optional refresh suggestion
       const errorMessage: Message = {
         id: Date.now() + 1,
         role: 'assistant',
-        content: "I'm having trouble connecting right now. Please try again in a moment.",
+        content: shouldSuggestRefresh
+          ? `${errorContent}\n\nYou can refresh the page or try again later.`
+          : errorContent,
         created_at: new Date().toISOString(),
       }
       setMessages((prev) => [...prev, errorMessage])
@@ -185,7 +229,7 @@ export default function ChatWidget({ onTaskChange }: ChatWidgetProps) {
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 20, scale: 0.95 }}
             transition={{ duration: 0.3 }}
-            className="fixed z-50 bg-gray-900/95 backdrop-blur-xl border border-purple-500/20 shadow-xl shadow-purple-500/20 md:bottom-24 md:right-6 md:w-[380px] md:h-[560px] md:rounded-2xl bottom-0 inset-x-0 h-[85vh] rounded-t-2xl"
+            className="fixed z-50 bg-gray-900/90 backdrop-blur-xl border border-purple-500/20 shadow-xl shadow-purple-500/20 md:bottom-6 md:right-6 md:w-[380px] md:h-[560px] md:max-h-[560px] md:rounded-2xl bottom-0 inset-x-0 h-[85vh] rounded-t-2xl"
           >
             <div className="flex flex-col h-full overflow-hidden">
               {/* Header with drag capability for mobile */}

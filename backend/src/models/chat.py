@@ -28,7 +28,7 @@ class Message(SQLModel, table=True):
     """A single chat message within a conversation.
 
     role: 'user' or 'assistant'
-    metadata: JSON string storing tool_calls, action type, reasoning traces.
+    metadata_json: JSON string storing tool_calls, action type, reasoning traces.
     """
 
     __tablename__ = "message"
@@ -37,21 +37,30 @@ class Message(SQLModel, table=True):
     conversation_id: int = Field(foreign_key="conversation.id", index=True)
     role: str = Field()  # 'user' or 'assistant'
     content: str = Field()
-    metadata_json: Optional[str] = Field(default=None, sa_column_kwargs={"name": "metadata"})
+    metadata_json: Optional[str] = Field(default=None)
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
     conversation: Optional[Conversation] = Relationship(back_populates="messages")
 
-    @property
-    def metadata(self) -> Optional[dict]:
-        """Parse metadata JSON string to dict."""
+    def get_metadata(self) -> Optional[dict]:
+        """Parse metadata JSON string to dict.
+
+        Returns:
+            dict: Parsed metadata or None if not set
+        """
         if self.metadata_json:
-            return json.loads(self.metadata_json)
+            try:
+                return json.loads(self.metadata_json)
+            except json.JSONDecodeError:
+                return None
         return None
 
-    @metadata.setter
-    def metadata(self, value: Optional[dict]):
-        """Serialize metadata dict to JSON string."""
+    def set_metadata(self, value: Optional[dict]) -> None:
+        """Serialize metadata dict to JSON string.
+
+        Args:
+            value: Dict to serialize or None to clear
+        """
         if value is not None:
             self.metadata_json = json.dumps(value)
         else:
@@ -73,7 +82,7 @@ class MessageRead(SQLModel):
     id: int
     role: str
     content: str
-    metadata: Optional[dict] = None
+    metadata_dict: Optional[dict] = None
     created_at: datetime
 
 

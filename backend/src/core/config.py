@@ -18,6 +18,11 @@ class Settings:
         self.debug: bool = os.getenv("DEBUG", "false").lower() == "true"
         self.openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
 
+        # MCP Server Configuration (Phase 3)
+        self.mcp_host: str = os.getenv("MCP_HOST", "localhost")
+        self.mcp_port: int = int(os.getenv("MCP_PORT", "8001"))
+        self.mcp_debug: bool = os.getenv("MCP_DEBUG", "false").lower() == "true"
+
         # Validate required settings
         if not self.better_auth_secret:
             raise ValueError("BETTER_AUTH_SECRET environment variable is required")
