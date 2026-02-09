@@ -100,31 +100,55 @@ export function extractErrorDetails(error: unknown): ErrorDetails {
 /**
  * Format error details for console logging
  * Returns an object that displays well in browser DevTools
+ * FIXED: Now handles empty/sparse error objects properly
  */
 export function formatErrorForLogging(
   details: ErrorDetails,
   context?: Record<string, unknown>
 ) {
-  return {
-    '🔴 Error': {
-      message: details.message,
-      type: details.type,
-      ...(details.status && { httpStatus: details.status }),
-      ...(details.code && { errorCode: details.code }),
-      ...(details.url && { requestUrl: details.url }),
-    },
-    ...(context && { '📋 Context': context }),
-    ...(details.stack && {
-      '📚 Stack Trace': details.stack
-        .split('\n')
-        .slice(0, 5) // First 5 stack frames
-        .join('\n'),
-    }),
+  // Build the error object with all available information
+  const errorObj: Record<string, unknown> = {
+    message: details.message || '(no message)',
+    type: details.type || '(unknown)',
   }
+
+  // Add HTTP details if available
+  if (details.status) {
+    errorObj.httpStatus = details.status
+  }
+  if (details.statusText) {
+    errorObj.statusText = details.statusText
+  }
+  if (details.code) {
+    errorObj.errorCode = details.code
+  }
+  if (details.url) {
+    errorObj.requestUrl = details.url
+  }
+
+  const formatted: Record<string, unknown> = {
+    '🔴 Error': errorObj,
+  }
+
+  // Add context if provided
+  if (context && Object.keys(context).length > 0) {
+    formatted['📋 Context'] = context
+  }
+
+  // Add stack trace if available
+  if (details.stack) {
+    formatted['📚 Stack Trace'] = details.stack
+      .split('\n')
+      .slice(0, 5) // First 5 stack frames
+      .join('\n')
+  }
+
+  return formatted
 }
 
 /**
  * Unified error logger function
+ * FIXED: Now logs complete error information even for sparse error objects
  * Usage: logError(error, { componentName: 'ChatWidget', action: 'sendMessage' })
  */
 export function logError(
@@ -136,7 +160,19 @@ export function logError(
 
   // Log with error group for better organization in DevTools
   console.group('🚨 Error Logged')
+
+  // Always log the formatted error object
   console.error(formatted)
+
+  // Also log the raw error for debugging if it has properties
+  if (error && typeof error === 'object') {
+    const errorObj = error as Record<string, unknown>
+    const keys = Object.keys(errorObj)
+    if (keys.length > 0) {
+      console.error('Raw error object:', error)
+    }
+  }
+
   console.groupEnd()
 
   // Also return details for programmatic use (e.g., error reporting services)
