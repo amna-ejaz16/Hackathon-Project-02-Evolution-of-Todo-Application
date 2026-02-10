@@ -18,6 +18,7 @@ import logging
 import json
 import sys
 import os
+import re
 from io import StringIO
 
 from ..models.chat import Conversation, Message, ChatRequest, ChatResponse
@@ -33,6 +34,29 @@ os.environ['MCP_NO_SERVER'] = '1'
 # Suppress warnings from external libraries that might try to use MCP
 import warnings
 warnings.filterwarnings('ignore', message='.*Unable to add filesystem.*')
+
+# Confirmation detection patterns for pending action handler
+AFFIRMATIVE_PATTERNS = {
+    "yes", "confirm", "ok", "sure", "yeah", "yep",
+    "proceed", "delete it", "go ahead", "do it"
+}
+
+NEGATIVE_PATTERNS = {
+    "no", "cancel", "stop", "don't", "nope",
+    "nevermind", "never mind", "abort"
+}
+
+
+def is_confirmation(message: str) -> bool:
+    """Check if message is an affirmative confirmation."""
+    normalized = message.lower().strip().strip('.,!?')
+    return normalized in AFFIRMATIVE_PATTERNS
+
+
+def is_cancellation(message: str) -> bool:
+    """Check if message is a negative cancellation."""
+    normalized = message.lower().strip().strip('.,!?')
+    return normalized in NEGATIVE_PATTERNS
 
 
 class ChatService:
@@ -82,13 +106,35 @@ When a user wants to complete or uncomplete a task:
 - If no match is found, inform the user and offer to list all their tasks
 - Example: "I found multiple tasks matching 'report': 1. Write monthly report, 2. Submit expense report. Which one would you like to complete?"
 
-DELETING TASKS (T031):
-When a user wants to delete a task:
-- First use list_tasks to find matching tasks by title keywords
-- If exactly one match is found, confirm before proceeding: "Are you sure you want to delete '[task title]'?"
-- Wait for explicit confirmation (yes/confirm/delete) before calling delete_task
-- If multiple matches, list them and ask which one to delete
-- If no match, inform the user and offer to list their tasks
+DELETING TASKS (T031 - Multi-turn confirmation):
+Two-turn pattern for task deletion:
+
+TURN 1 - User says "delete [task description]":
+- Use list_tasks tool to find matching tasks by searching for keywords from the user's message
+- If exactly ONE task matches:
+  * Show the task name and ID: "I found the task '[task title]' (ID: {id}). Are you sure you want to delete it?"
+  * STOP - do NOT call delete_task on this turn
+  * WAIT for user confirmation in their next message
+- If MULTIPLE tasks match:
+  * List all matching tasks with their IDs (numbered 1, 2, 3, etc.)
+  * Ask which one to delete
+  * WAIT for user to specify
+- If NO tasks match:
+  * Tell user no matching tasks found
+  * Offer to show all tasks
+
+TURN 2 - User responds with affirmative (e.g., "yes", "confirm", "ok"):
+- LOOK at your previous message in the conversation history to find the task ID
+- The task ID will be in format "(ID: {number})" from your confirmation message
+- EXTRACT that task ID number
+- CALL the delete_task tool with the extracted task_id as parameter
+- Report result: "✓ Deleted task '[task title]' (ID: {id})"
+
+If user responds with "no" or "cancel":
+- STOP (do NOT call delete_task)
+- Respond: "No problem. I did not delete the task."
+
+CRITICAL: The task ID MUST be extracted from your previous confirmation message before calling delete_task
 
 UPDATING TASKS (T033):
 When a user wants to update a task:
@@ -175,6 +221,131 @@ Be friendly and natural while staying focused on task management."""
 
         logger.info(f"Retrieved {len(context)} context messages for conversation {conversation_id}")
         return context
+
+    @staticmethod
+    def handle_pending_action(
+        user_message: str,
+        conversation_id: int,
+        user_id: str,
+        session: Session
+    ) -> Optional[ChatResponse]:
+        """
+        Handle pending action confirmation/cancellation.
+
+        Checks if the last assistant message has a pending_action and if the
+        current user message is a confirmation or cancellation.
+
+        If confirmed: Executes the pending action directly and returns response
+        If cancelled: Clears pending action and returns cancellation message
+        If neither: Returns None (proceed to agent normally)
+
+        Args:
+            user_message: Current user input
+            conversation_id: Conversation ID
+            user_id: User ID from JWT
+            session: Database session
+
+        Returns:
+            ChatResponse if pending action was handled, None otherwise
+        """
+        # Get last assistant message with metadata
+        last_assistant_msg = session.exec(
+            select(Message)
+            .where(Message.conversation_id == conversation_id)
+            .where(Message.role == "assistant")
+            .order_by(Message.created_at.desc())
+            .limit(1)
+        ).first()
+
+        if not last_assistant_msg:
+            return None
+
+        metadata = last_assistant_msg.get_metadata()
+        if not metadata or "pending_action" not in metadata:
+            return None
+
+        pending = metadata["pending_action"]
+
+        # Check for confirmation
+        if is_confirmation(user_message):
+            logger.info(f"[PENDING ACTION] User confirmed {pending['type']} for task_id={pending['task_id']}")
+
+            # Execute pending action
+            if pending["type"] == "delete_task":
+                # Import here to avoid circular dependency
+                tools_list = create_task_tools(user_id=user_id, session=session)
+
+                # Find delete_task tool
+                delete_tool = next((t for t in tools_list if t.__name__ == "delete_task"), None)
+
+                if delete_tool:
+                    # Execute deletion
+                    result = delete_tool(task_id=pending["task_id"])
+
+                    # Store user confirmation message
+                    ChatService.store_message(
+                        conversation_id=conversation_id,
+                        role="user",
+                        content=user_message,
+                        metadata=None,
+                        session=session
+                    )
+
+                    # Store assistant confirmation response
+                    assistant_response = f"✓ {result}"
+                    ChatService.store_message(
+                        conversation_id=conversation_id,
+                        role="assistant",
+                        content=assistant_response,
+                        metadata={
+                            "tool_calls": [{"name": "delete_task", "arguments": {"task_id": pending["task_id"]}}],
+                            "action": "task_deleted",
+                            "task_id": pending["task_id"]
+                        },
+                        session=session
+                    )
+
+                    logger.info(f"[PENDING ACTION] Executed delete_task for task_id={pending['task_id']}")
+
+                    return ChatResponse(
+                        response=assistant_response,
+                        conversation_id=conversation_id,
+                        action="task_deleted",
+                        task_id=pending["task_id"]
+                    )
+
+        # Check for cancellation
+        elif is_cancellation(user_message):
+            logger.info(f"[PENDING ACTION] User cancelled {pending['type']} for task_id={pending['task_id']}")
+
+            # Store user cancellation message
+            ChatService.store_message(
+                conversation_id=conversation_id,
+                role="user",
+                content=user_message,
+                metadata=None,
+                session=session
+            )
+
+            # Store assistant acknowledgment
+            assistant_response = f"No problem. I did not delete the task '{pending['task_title']}'."
+            ChatService.store_message(
+                conversation_id=conversation_id,
+                role="assistant",
+                content=assistant_response,
+                metadata={"action": "conversation"},
+                session=session
+            )
+
+            return ChatResponse(
+                response=assistant_response,
+                conversation_id=conversation_id,
+                action="conversation",
+                task_id=None
+            )
+
+        # Not a confirmation or cancellation - proceed to agent
+        return None
 
     @staticmethod
     def store_message(
@@ -293,6 +464,18 @@ Be friendly and natural while staying focused on task management."""
             )
             logger.info(f"[MESSAGE STORAGE] Stored user message message_id={user_msg.id}, conversation_id={conversation_id}, content_length={len(user_message)}")
 
+            # Step 2.5: Check for pending action confirmation (NEW)
+            pending_response = ChatService.handle_pending_action(
+                user_message=user_message,
+                conversation_id=conversation_id,
+                user_id=user_id,
+                session=session
+            )
+
+            if pending_response:
+                logger.info(f"[PENDING ACTION] Handled pending action, skipping agent execution")
+                return pending_response
+
             # Step 3: Fetch context (last 20 messages for AI)
             context_messages = ChatService.get_context_messages(conversation_id, session, limit=20)
             logger.info(f"[CONVERSATION LIFECYCLE] Fetched {len(context_messages)} context messages for conversation_id={conversation_id}, user_id={user_id}")
@@ -391,6 +574,27 @@ Be friendly and natural while staying focused on task management."""
             else:
                 logger.warning(f"[AGENT EXECUTION] Could not extract assistant response from result, user_id={user_id}, result_type={type(result)}, has_new_items={hasattr(result, 'new_items')}")
 
+            # NEW: Detect if agent is asking for delete confirmation
+            pending_action = None
+            if "Are you sure you want to delete" in assistant_response or \
+               "Do you want to delete" in assistant_response:
+                # Extract task ID from confirmation message
+                match = re.search(r'\(ID:\s*(\d+)\)', assistant_response)
+                if match:
+                    task_id_str = match.group(1)
+                    # Try to find task title in message
+                    title_match = re.search(r"'([^']+)'", assistant_response)
+                    task_title = title_match.group(1) if title_match else "this task"
+
+                    pending_action = {
+                        "type": "delete_task",
+                        "task_id": int(task_id_str),
+                        "task_title": task_title,
+                        "awaiting_confirmation": True,
+                        "created_at": datetime.utcnow().isoformat()
+                    }
+                    logger.info(f"[PENDING ACTION] Detected confirmation request for task_id={pending_action['task_id']}")
+
             # T025: Parse tool calls from agent result to determine action type
             action = "conversation"  # Default action
             task_id = None
@@ -400,9 +604,28 @@ Be friendly and natural while staying focused on task management."""
             if result and hasattr(result, 'new_items') and result.new_items:
                 for item in result.new_items:
                     # Handle ToolCallItem (the tool call itself)
+                    # Production-safe extraction for OpenAI Responses API ResponseFunctionToolCall
                     if isinstance(item, ToolCallItem):
-                        tool_name = item.raw_item.function.name if hasattr(item.raw_item.function, 'name') else ""
-                        tool_args_str = item.raw_item.function.arguments if hasattr(item.raw_item.function, 'arguments') else ""
+                        tool_name = ""
+                        tool_args_str = ""
+
+                        # NEW API: ResponseFunctionToolCall has .name and .arguments as direct attributes
+                        # Defensive extraction to handle both old and new API formats
+                        if hasattr(item.raw_item, 'name'):
+                            # New Responses API: Direct attribute access
+                            tool_name = getattr(item.raw_item, 'name', '')
+                            tool_args_str = getattr(item.raw_item, 'arguments', '')
+                        elif hasattr(item.raw_item, 'function') and hasattr(item.raw_item.function, 'name'):
+                            # Old ChatCompletion API: Nested structure (fallback, may be removed later)
+                            tool_name = item.raw_item.function.name
+                            tool_args_str = item.raw_item.function.arguments
+                        else:
+                            # Unknown format: log and skip
+                            logger.warning(
+                                f"[TOOL CALL TRACKING] Unknown tool call format for item type {type(item.raw_item).__name__}, "
+                                f"user_id={user_id}, conversation_id={conversation_id}"
+                            )
+                            continue
 
                         # Parse arguments to extract task_id if present
                         tool_args = {}
@@ -463,6 +686,10 @@ Be friendly and natural while staying focused on task management."""
 
             if task_id:
                 metadata["task_id"] = task_id
+
+            # NEW: Add pending action if detected
+            if pending_action:
+                metadata["pending_action"] = pending_action
 
             # Step 8: Store assistant message
             assistant_msg = ChatService.store_message(
