@@ -107,14 +107,16 @@ When a user wants to complete or uncomplete a task:
 - Example: "I found multiple tasks matching 'report': 1. Write monthly report, 2. Submit expense report. Which one would you like to complete?"
 
 DELETING TASKS (T031 - Multi-turn confirmation):
-Two-turn pattern for task deletion:
+Two-turn pattern for task deletion with context preservation:
 
 TURN 1 - User says "delete [task description]":
 - Use list_tasks tool to find matching tasks by searching for keywords from the user's message
+- PRESERVE the task context: remember the task ID and title you found
 - If exactly ONE task matches:
   * Show the task name and ID: "I found the task '[task title]' (ID: {id}). Are you sure you want to delete it?"
   * STOP - do NOT call delete_task on this turn
   * WAIT for user confirmation in their next message
+  * IMPORTANT: Your confirmation message must always include the task ID in format "(ID: {number})"
 - If MULTIPLE tasks match:
   * List all matching tasks with their IDs (numbered 1, 2, 3, etc.)
   * Ask which one to delete
@@ -124,17 +126,23 @@ TURN 1 - User says "delete [task description]":
   * Offer to show all tasks
 
 TURN 2 - User responds with affirmative (e.g., "yes", "confirm", "ok"):
-- LOOK at your previous message in the conversation history to find the task ID
+- CONTEXT PRESERVATION: Look at your IMMEDIATELY PREVIOUS message in the conversation history
 - The task ID will be in format "(ID: {number})" from your confirmation message
-- EXTRACT that task ID number
+- EXTRACT that task ID number using regex or string search
+- VERIFY the task ID is a valid positive integer before calling delete_task
 - CALL the delete_task tool with the extracted task_id as parameter
-- Report result: "✓ Deleted task '[task title]' (ID: {id})"
+- CONFIRM deletion: "✓ Deleted task '[task title]' (ID: {id})"
 
 If user responds with "no" or "cancel":
+- CONTEXT PRESERVATION: Acknowledge the specific task from your previous message
 - STOP (do NOT call delete_task)
-- Respond: "No problem. I did not delete the task."
+- Respond: "No problem. I did not delete the task '[task title]' (ID: {id})."
 
-CRITICAL: The task ID MUST be extracted from your previous confirmation message before calling delete_task
+CRITICAL RULES FOR CONTEXT PRESERVATION:
+1. The task ID MUST be extracted from your previous confirmation message before calling delete_task
+2. Never assume or guess the task ID - always extract it from the conversation history
+3. Your confirmation message MUST include the task ID in format "(ID: {number})" so you can extract it later
+4. If you cannot find the task ID in your previous message, ask the user to clarify which task they want to delete
 
 UPDATING TASKS (T033):
 When a user wants to update a task:
@@ -230,10 +238,17 @@ Be friendly and natural while staying focused on task management."""
         session: Session
     ) -> Optional[ChatResponse]:
         """
-        Handle pending action confirmation/cancellation.
+        Handle pending action confirmation/cancellation - State Machine Pattern.
 
         Checks if the last assistant message has a pending_action and if the
         current user message is a confirmation or cancellation.
+
+        State Machine Flow:
+        1. Get last assistant message
+        2. Check for pending_action in metadata
+        3. Check user confirmation/cancellation
+        4. Execute action or return cancellation message
+        5. Return response or None to proceed to agent
 
         If confirmed: Executes the pending action directly and returns response
         If cancelled: Clears pending action and returns cancellation message
@@ -248,104 +263,207 @@ Be friendly and natural while staying focused on task management."""
         Returns:
             ChatResponse if pending action was handled, None otherwise
         """
-        # Get last assistant message with metadata
-        last_assistant_msg = session.exec(
-            select(Message)
-            .where(Message.conversation_id == conversation_id)
-            .where(Message.role == "assistant")
-            .order_by(Message.created_at.desc())
-            .limit(1)
-        ).first()
+        try:
+            logger.info(f"[PENDING ACTION STATE MACHINE] Entering pending action handler for user_id={user_id}, conversation_id={conversation_id}")
 
-        if not last_assistant_msg:
+            # STEP 1: Get last assistant message with metadata
+            last_assistant_msg = session.exec(
+                select(Message)
+                .where(Message.conversation_id == conversation_id)
+                .where(Message.role == "assistant")
+                .order_by(Message.created_at.desc())
+                .limit(1)
+            ).first()
+
+            if not last_assistant_msg:
+                logger.info(f"[PENDING ACTION STATE MACHINE] No last assistant message found, user_id={user_id}, conversation_id={conversation_id}")
+                return None
+
+            logger.info(f"[PENDING ACTION STATE MACHINE] Retrieved last assistant message id={last_assistant_msg.id}, content_preview={last_assistant_msg.content[:80]}")
+
+            # STEP 2: Extract metadata and check for pending action
+            metadata = last_assistant_msg.get_metadata()
+            if not metadata:
+                logger.info(f"[PENDING ACTION STATE MACHINE] No metadata on last assistant message, user_id={user_id}, conversation_id={conversation_id}")
+                return None
+
+            logger.debug(f"[PENDING ACTION STATE MACHINE] Metadata keys found: {list(metadata.keys())}, user_id={user_id}")
+
+            if "pending_action" not in metadata:
+                logger.info(f"[PENDING ACTION STATE MACHINE] No pending_action in metadata. Available keys: {list(metadata.keys())}, user_id={user_id}")
+                return None
+
+            logger.info(f"[PENDING ACTION STATE MACHINE] ✅ Found pending_action in metadata!")
+
+            pending = metadata.get("pending_action")
+            if not pending or not isinstance(pending, dict):
+                logger.warning(f"[PENDING ACTION STATE MACHINE] Invalid pending action structure: type={type(pending).__name__}, user_id={user_id}")
+                return None
+
+            logger.info(f"[PENDING ACTION STATE MACHINE] Found pending action in metadata: {pending}, user_id={user_id}")
+
+            # Validate pending action has required fields
+            pending_type = pending.get("type")
+            pending_task_id = pending.get("task_id")
+            pending_task_title = pending.get("task_title", f"task {pending_task_id}")
+
+            if pending_type != "delete_task":
+                logger.warning(f"[PENDING ACTION STATE MACHINE] Unknown pending action type: {pending_type}, user_id={user_id}")
+                return None
+
+            # STEP 3: Check user confirmation or cancellation
+            logger.info(f"[PENDING ACTION STATE MACHINE] Checking user message for confirmation/cancellation. Message: '{user_message}'")
+
+            # Debug: Check confirmation function
+            is_confirm = is_confirmation(user_message)
+            is_cancel = is_cancellation(user_message)
+            logger.info(f"[PENDING ACTION STATE MACHINE] Confirmation check: is_confirmation={is_confirm}, is_cancellation={is_cancel}")
+
+            # Check for confirmation
+            if is_confirm:
+                logger.info(f"[PENDING ACTION STATE MACHINE] ✅ USER CONFIRMED {pending_type} for task_id={pending_task_id}, title='{pending_task_title}', user_id={user_id}")
+
+                # Execute pending action (only delete_task supported)
+                if pending_type == "delete_task":
+                    # Validate task_id comprehensively
+                    if not isinstance(pending_task_id, int):
+                        logger.error(f"[PENDING ACTION] Invalid task_id type: {type(pending_task_id).__name__} (expected int)")
+                        return ChatResponse(
+                            response="Error: Invalid task ID format. Please try again.",
+                            conversation_id=conversation_id,
+                            action="conversation",
+                            task_id=None
+                        )
+
+                    if pending_task_id <= 0:
+                        logger.error(f"[PENDING ACTION] Invalid task_id value: {pending_task_id} (expected > 0)")
+                        return ChatResponse(
+                            response="Error: Invalid task ID value. Please try again.",
+                            conversation_id=conversation_id,
+                            action="conversation",
+                            task_id=None
+                        )
+
+                    # Import here to avoid circular dependency
+                    tools_list = create_task_tools(user_id=user_id, session=session)
+
+                    # Find delete_task tool
+                    delete_tool = next((t for t in tools_list if t.__name__ == "delete_task"), None)
+
+                    if not delete_tool:
+                        logger.error(f"[PENDING ACTION] delete_task tool not found")
+                        return ChatResponse(
+                            response="Error: Task deletion tool unavailable. Please try again.",
+                            conversation_id=conversation_id,
+                            action="conversation",
+                            task_id=None
+                        )
+
+                    try:
+                        # Execute deletion
+                        result = delete_tool(task_id=pending_task_id)
+                        logger.info(f"[PENDING ACTION] Delete tool result: {result}")
+
+                        # Safely check if deletion was successful
+                        result_str = str(result) if result else ""
+                        is_success = "Deleted task" in result_str
+
+                        if is_success:
+                            # Store assistant confirmation response with success metadata
+                            task_title = pending.get("task_title", f"task {pending_task_id}")
+                            assistant_response = f"✓ {result_str}"
+                            ChatService.store_message(
+                                conversation_id=conversation_id,
+                                role="assistant",
+                                content=assistant_response,
+                                metadata={
+                                    "tool_calls": [{"name": "delete_task", "arguments": {"task_id": pending_task_id}}],
+                                    "action": "task_deleted",
+                                    "task_id": pending_task_id
+                                },
+                                session=session
+                            )
+                            logger.info(f"[PENDING ACTION] Successfully deleted task_id={pending_task_id}, title='{task_title}'")
+
+                            return ChatResponse(
+                                response=assistant_response,
+                                conversation_id=conversation_id,
+                                action="task_deleted",
+                                task_id=pending_task_id
+                            )
+                        else:
+                            # Deletion failed - store error response without task_deleted action
+                            assistant_response = f"❌ {result_str}" if result_str else "❌ Could not delete task. Please try again."
+                            ChatService.store_message(
+                                conversation_id=conversation_id,
+                                role="assistant",
+                                content=assistant_response,
+                                metadata={
+                                    "error": result_str,
+                                    "action": "conversation"
+                                },
+                                session=session
+                            )
+                            logger.warning(f"[PENDING ACTION] Failed to delete task_id={pending_task_id}: {result_str}")
+
+                            return ChatResponse(
+                                response=assistant_response,
+                                conversation_id=conversation_id,
+                                action="conversation",
+                                task_id=None
+                            )
+                    except Exception as e:
+                        logger.error(f"[PENDING ACTION] Exception during delete execution: {type(e).__name__}: {e}", exc_info=True)
+                        error_msg = f"Error deleting task: {str(e)[:100]}"
+                        ChatService.store_message(
+                            conversation_id=conversation_id,
+                            role="assistant",
+                            content=error_msg,
+                            metadata={
+                                "error": str(e),
+                                "action": "conversation"
+                            },
+                            session=session
+                        )
+                        return ChatResponse(
+                            response=error_msg,
+                            conversation_id=conversation_id,
+                            action="conversation",
+                            task_id=None
+                        )
+
+            # Check for cancellation
+            elif is_cancel:
+                logger.info(f"[PENDING ACTION] ✅ USER CANCELLED {pending_type} for task_id={pending_task_id}")
+
+                # NOTE: User message already stored in process_message() at step 2, don't store twice
+
+                # Store assistant acknowledgment response
+                task_title = pending.get("task_title", "this task")
+                assistant_response = f"No problem. I did not delete the task '{task_title}'."
+                ChatService.store_message(
+                    conversation_id=conversation_id,
+                    role="assistant",
+                    content=assistant_response,
+                    metadata={"action": "conversation"},
+                    session=session
+                )
+
+                return ChatResponse(
+                    response=assistant_response,
+                    conversation_id=conversation_id,
+                    action="conversation",
+                    task_id=None
+                )
+
+            # Not a confirmation or cancellation - proceed to agent
             return None
 
-        metadata = last_assistant_msg.get_metadata()
-        if not metadata or "pending_action" not in metadata:
+        except Exception as e:
+            # Fail gracefully if pending action handling has unexpected errors
+            logger.error(f"[PENDING ACTION] Unexpected error in handle_pending_action: {type(e).__name__}: {e}", exc_info=True)
+            # Don't return a response - let it proceed to agent
             return None
-
-        pending = metadata["pending_action"]
-
-        # Check for confirmation
-        if is_confirmation(user_message):
-            logger.info(f"[PENDING ACTION] User confirmed {pending['type']} for task_id={pending['task_id']}")
-
-            # Execute pending action
-            if pending["type"] == "delete_task":
-                # Import here to avoid circular dependency
-                tools_list = create_task_tools(user_id=user_id, session=session)
-
-                # Find delete_task tool
-                delete_tool = next((t for t in tools_list if t.__name__ == "delete_task"), None)
-
-                if delete_tool:
-                    # Execute deletion
-                    result = delete_tool(task_id=pending["task_id"])
-
-                    # Store user confirmation message
-                    ChatService.store_message(
-                        conversation_id=conversation_id,
-                        role="user",
-                        content=user_message,
-                        metadata=None,
-                        session=session
-                    )
-
-                    # Store assistant confirmation response
-                    assistant_response = f"✓ {result}"
-                    ChatService.store_message(
-                        conversation_id=conversation_id,
-                        role="assistant",
-                        content=assistant_response,
-                        metadata={
-                            "tool_calls": [{"name": "delete_task", "arguments": {"task_id": pending["task_id"]}}],
-                            "action": "task_deleted",
-                            "task_id": pending["task_id"]
-                        },
-                        session=session
-                    )
-
-                    logger.info(f"[PENDING ACTION] Executed delete_task for task_id={pending['task_id']}")
-
-                    return ChatResponse(
-                        response=assistant_response,
-                        conversation_id=conversation_id,
-                        action="task_deleted",
-                        task_id=pending["task_id"]
-                    )
-
-        # Check for cancellation
-        elif is_cancellation(user_message):
-            logger.info(f"[PENDING ACTION] User cancelled {pending['type']} for task_id={pending['task_id']}")
-
-            # Store user cancellation message
-            ChatService.store_message(
-                conversation_id=conversation_id,
-                role="user",
-                content=user_message,
-                metadata=None,
-                session=session
-            )
-
-            # Store assistant acknowledgment
-            assistant_response = f"No problem. I did not delete the task '{pending['task_title']}'."
-            ChatService.store_message(
-                conversation_id=conversation_id,
-                role="assistant",
-                content=assistant_response,
-                metadata={"action": "conversation"},
-                session=session
-            )
-
-            return ChatResponse(
-                response=assistant_response,
-                conversation_id=conversation_id,
-                action="conversation",
-                task_id=None
-            )
-
-        # Not a confirmation or cancellation - proceed to agent
-        return None
 
     @staticmethod
     def store_message(
@@ -464,7 +582,9 @@ Be friendly and natural while staying focused on task management."""
             )
             logger.info(f"[MESSAGE STORAGE] Stored user message message_id={user_msg.id}, conversation_id={conversation_id}, content_length={len(user_message)}")
 
-            # Step 2.5: Check for pending action confirmation (NEW)
+            # Step 2.5: Check for pending action confirmation (CRITICAL)
+            # This must happen BEFORE agent initialization to avoid MCP errors blocking pending actions
+            logger.info(f"[EXECUTION FLOW] Checking for pending action at step 2.5")
             pending_response = ChatService.handle_pending_action(
                 user_message=user_message,
                 conversation_id=conversation_id,
@@ -473,52 +593,144 @@ Be friendly and natural while staying focused on task management."""
             )
 
             if pending_response:
-                logger.info(f"[PENDING ACTION] Handled pending action, skipping agent execution")
+                logger.info(f"[PENDING ACTION] Handled pending action successfully, skipping agent execution entirely")
                 return pending_response
+
+            logger.debug(f"[EXECUTION FLOW] No pending action found, proceeding to agent execution")
 
             # Step 3: Fetch context (last 20 messages for AI)
             context_messages = ChatService.get_context_messages(conversation_id, session, limit=20)
             logger.info(f"[CONVERSATION LIFECYCLE] Fetched {len(context_messages)} context messages for conversation_id={conversation_id}, user_id={user_id}")
 
             # Step 4: Create task tools bound to this user
+            # These tools are created BEFORE agent initialization so they're available for both
+            # agent execution AND backup pending action handling
             tools = create_task_tools(user_id=user_id, session=session)
             logger.info(f"[AGENT EXECUTION] Created {len(tools)} task tools for user_id={user_id}")
 
-            # Step 5: Create agent with tools and instructions
-            # CRITICAL: Disable all MCP operations to prevent "Unable to add filesystem: <illegal path>" errors
-            # This error occurs when MCP tries to initialize filesystem sandbox with invalid paths in serverless environments
-            # We use ONLY @function_tool decorated tools, no MCP servers needed
+            # Log available tools for debugging
+            tool_names = [getattr(t, '__name__', str(t)) for t in tools]
+            logger.debug(f"[AGENT EXECUTION] Available tools: {tool_names}")
 
-            logger.info(f"[AGENT EXECUTION] Creating agent with {len(tools)} tools for user_id={user_id}")
+            # Step 5-6: Create agent and runner INSIDE try/except to catch MCP initialization errors
+            # MCP filesystem errors occur during Agent() construction, not during Runner.run()
+            # We must catch these errors here, not later during execution
 
-            agent = Agent(
-                name="TaskManagerAssistant",
-                instructions=ChatService.AGENT_INSTRUCTIONS,
-                tools=tools,
-                model="gpt-4o-mini",  # Use mini for cost efficiency and faster responses
-                mcp_servers=[],  # CRITICAL: Empty list - no MCP servers
-            )
-
-            logger.info(f"[AGENT EXECUTION] Agent created successfully. Instructions: {len(ChatService.AGENT_INSTRUCTIONS)} chars, Tools: {len(tools)}")
-
-            # Step 6: Run agent with context
-            # Runner.run() is ASYNC and requires await
-            runner = Runner()
-
-            # Build full conversation context including the new user message
-            full_context = context_messages + [{"role": "user", "content": user_message}]
-
-            logger.info(f"[AGENT EXECUTION] Running agent. Context messages: {len(full_context)}, Current message: {user_message[:100]}...")
-
-            # Suppress all stderr output during agent execution to suppress MCP warnings
-            # This is safe because we're already logging important events
+            agent = None
+            runner = None
+            result = None
             old_stderr = sys.stderr
             old_stdout = sys.stdout
-            sys.stderr = StringIO()
-            sys.stdout = StringIO()
 
-            result = None
             try:
+                # Suppress all stderr/stdout during agent creation
+                # This is safe because MCP warnings are not actionable in serverless environment
+                # MCP tries to initialize filesystem even with mcp_servers=[] so we capture those errors
+                sys.stderr = StringIO()
+                sys.stdout = StringIO()
+
+                logger.info(f"[AGENT EXECUTION] Creating agent with {len(tools)} tools for user_id={user_id}")
+
+                # Step 5: Create agent with tools and instructions
+                # CRITICAL: mcp_servers=[] prevents MCP server initialization
+                # Note: Agent() may still try to validate filesystem, which we suppress above
+                try:
+                    agent = Agent(
+                        name="TaskManagerAssistant",
+                        instructions=ChatService.AGENT_INSTRUCTIONS,
+                        tools=tools,
+                        model="gpt-4o-mini",  # Use mini for cost efficiency and faster responses
+                        mcp_servers=[],  # CRITICAL: Empty list - no MCP servers
+                    )
+                    logger.info(f"[AGENT EXECUTION] Agent created successfully. Tools: {len(tools)}")
+
+                except Exception as agent_init_error:
+                    # Catch agent initialization errors even with stderr/stdout suppression
+                    error_str = str(agent_init_error).lower()
+                    if any(keyword in error_str for keyword in ["filesystem", "illegal path", "mcp", "add filesystem"]):
+                        logger.warning(f"[AGENT EXECUTION] MCP error during agent init (suppressed): {type(agent_init_error).__name__}")
+                        agent = None  # Mark as failed but continue
+                    else:
+                        raise
+
+                # Step 6: Create runner for agent execution
+                runner = Runner()
+                logger.info(f"[AGENT EXECUTION] Runner initialized successfully")
+
+                # Restore stderr/stdout after successful initialization
+                sys.stderr = old_stderr
+                sys.stdout = old_stdout
+
+            except (ValueError, OSError, RuntimeError) as e:
+                # Catch MCP initialization errors (filesystem, paths, etc.)
+                error_str = str(e).lower()
+
+                # Log MCP-related errors as warnings (they're expected in serverless)
+                if any(keyword in error_str for keyword in ["filesystem", "illegal path", "mcp", "add filesystem"]):
+                    logger.warning(f"[AGENT EXECUTION] MCP initialization error (expected in serverless): {type(e).__name__}: {e}")
+                    # Restore stderr/stdout
+                    sys.stderr = old_stderr
+                    sys.stdout = old_stdout
+
+                    error_response = "I'm having trouble connecting to the task management system. Please try again in a moment."
+                    ChatService.store_message(
+                        conversation_id=conversation_id,
+                        role="assistant",
+                        content=error_response,
+                        metadata={"error": "mcp_initialization", "type": str(type(e).__name__)},
+                        session=session
+                    )
+
+                    logger.info(f"[AGENT EXECUTION] Returning graceful error response to user after MCP failure")
+                    return ChatResponse(
+                        response=error_response,
+                        conversation_id=conversation_id,
+                        action="conversation",
+                        task_id=None
+                    )
+                else:
+                    # Other errors should be logged and re-raised
+                    logger.error(f"[AGENT EXECUTION] Agent initialization error: {type(e).__name__}: {e}", exc_info=True)
+                    sys.stderr = old_stderr
+                    sys.stdout = old_stdout
+                    raise
+            except Exception as e:
+                # Catch any other unexpected errors during initialization
+                logger.error(f"[AGENT EXECUTION] Unexpected error during agent initialization: {type(e).__name__}: {e}", exc_info=True)
+                sys.stderr = old_stderr
+                sys.stdout = old_stdout
+                raise
+            finally:
+                # ALWAYS restore stdout and stderr at the end of initialization block
+                sys.stderr = old_stderr
+                sys.stdout = old_stdout
+
+            # Validate agent was successfully initialized before proceeding
+            if agent is None or runner is None:
+                logger.error(f"[AGENT EXECUTION] Agent initialization failed (agent=None or runner=None)")
+                error_response = "I'm having trouble initializing the task assistant. Please try again in a moment."
+                ChatService.store_message(
+                    conversation_id=conversation_id,
+                    role="assistant",
+                    content=error_response,
+                    metadata={"error": "agent_initialization_failed"},
+                    session=session
+                )
+                return ChatResponse(
+                    response=error_response,
+                    conversation_id=conversation_id,
+                    action="conversation",
+                    task_id=None
+                )
+
+            # At this point, agent and runner are successfully initialized
+            # Now run the agent with error handling for execution phase
+            try:
+                logger.info(f"[AGENT EXECUTION] Running agent. Current message: {user_message[:100]}...")
+
+                # Build full conversation context including the new user message
+                full_context = context_messages + [{"role": "user", "content": user_message}]
+
                 # Execute agent with just the current user message
                 # The agent will have access to task tools but NO filesystem access
                 result = await runner.run(
@@ -526,18 +738,9 @@ Be friendly and natural while staying focused on task management."""
                     input=user_message,
                 )
                 logger.info(f"[AGENT EXECUTION] Agent completed successfully")
-            except ValueError as e:
-                # Handle "Unable to add filesystem: <illegal path>" errors
-                error_str = str(e).lower()
-                if "filesystem" in error_str or "illegal path" in error_str:
-                    logger.warning(f"[AGENT EXECUTION] MCP filesystem error (expected, harmless): {e}")
-                    # Despite the MCP error, the agent may have still produced a response
-                    # Try to extract whatever response we got, or fall back to default
-                else:
-                    logger.error(f"[AGENT EXECUTION] ValueError: {e}", exc_info=True)
-                    raise
+
             except Exception as e:
-                logger.error(f"[AGENT EXECUTION] Agent error: {type(e).__name__}: {e}", exc_info=True)
+                logger.error(f"[AGENT EXECUTION] Agent execution error: {type(e).__name__}: {e}", exc_info=True)
                 raise
             finally:
                 # ALWAYS restore stdout and stderr
@@ -551,49 +754,122 @@ Be friendly and natural while staying focused on task management."""
             # Each MessageOutputItem has raw_item (ResponseOutputMessage) with content field
             assistant_response = "I'm sorry, I couldn't process that request."
 
-            if result and hasattr(result, 'new_items') and result.new_items:
-                # Get the last assistant message from new_items
-                for item in reversed(result.new_items):
-                    if isinstance(item, MessageOutputItem):
-                        # Extract content from ResponseOutputMessage
-                        if hasattr(item.raw_item, 'content') and item.raw_item.content:
-                            # item.raw_item.content is a list of content blocks
-                            # Extract text from ResponseOutputText blocks
-                            text_parts = []
-                            for content_block in item.raw_item.content:
-                                if hasattr(content_block, 'text'):
-                                    text_parts.append(content_block.text)
-                            if text_parts:
-                                assistant_response = "\n".join(text_parts)
-                                logger.info(f"[AGENT EXECUTION] Extracted assistant response from new_items, length={len(assistant_response)}, user_id={user_id}")
-                                break
-            elif isinstance(result, dict):
-                # Fallback for dict-like response
-                assistant_response = result.get("response", assistant_response)
-                logger.warning(f"[AGENT EXECUTION] Agent result was dict-like (unexpected format), user_id={user_id}")
-            else:
-                logger.warning(f"[AGENT EXECUTION] Could not extract assistant response from result, user_id={user_id}, result_type={type(result)}, has_new_items={hasattr(result, 'new_items')}")
+            try:
+                if result and hasattr(result, 'new_items') and result.new_items:
+                    # Get the last assistant message from new_items
+                    for item in reversed(result.new_items):
+                        if isinstance(item, MessageOutputItem):
+                            # Extract content from ResponseOutputMessage
+                            if hasattr(item.raw_item, 'content') and item.raw_item.content:
+                                # item.raw_item.content is a list of content blocks
+                                # Extract text from ResponseOutputText blocks
+                                text_parts = []
+                                for content_block in item.raw_item.content:
+                                    if hasattr(content_block, 'text'):
+                                        text_str = str(content_block.text) if content_block.text else ""
+                                        if text_str:
+                                            text_parts.append(text_str)
+                                if text_parts:
+                                    assistant_response = "\n".join(text_parts)
+                                    logger.info(f"[AGENT EXECUTION] Extracted assistant response from new_items, length={len(assistant_response)}, user_id={user_id}")
+                                    break
+                elif isinstance(result, dict):
+                    # Fallback for dict-like response
+                    assistant_response = result.get("response", assistant_response)
+                    logger.warning(f"[AGENT EXECUTION] Agent result was dict-like (unexpected format), user_id={user_id}")
+                else:
+                    logger.warning(f"[AGENT EXECUTION] Could not extract assistant response from result, user_id={user_id}, result_type={type(result)}, has_new_items={hasattr(result, 'new_items')}")
+            except Exception as e:
+                logger.error(f"[AGENT EXECUTION] Error extracting assistant response: {type(e).__name__}: {e}", exc_info=True)
+                assistant_response = "I'm sorry, I encountered an error processing your request. Please try again."
 
             # NEW: Detect if agent is asking for delete confirmation
+            # Enhanced detection patterns for various confirmation phrases - MUCH more flexible
             pending_action = None
-            if "Are you sure you want to delete" in assistant_response or \
-               "Do you want to delete" in assistant_response:
-                # Extract task ID from confirmation message
-                match = re.search(r'\(ID:\s*(\d+)\)', assistant_response)
+            delete_confirmation_patterns = [
+                r"are\s+you\s+sure.*delete",           # "are you sure ... delete"
+                r"do\s+you.*want.*delete",             # "do you want to delete" or "do you want me to delete"
+                r"should\s+i\s+delete",                # "should i delete"
+                r"should\s+we\s+delete",               # "should we delete"
+                r"confirm.*delete",                    # "confirm delete"
+                r"delete.*confirm",                    # "delete confirm"
+                r"want\s+(?:to\s+)?delete",           # "want to delete" or "want delete"
+                r"go\s+ahead.*delete",                 # "go ahead and delete"
+                r"proceed.*delete",                    # "proceed with delete"
+            ]
+
+            # Check if response contains any delete confirmation pattern
+            has_delete_phrase = any(re.search(pattern, assistant_response, re.IGNORECASE)
+                                   for pattern in delete_confirmation_patterns)
+
+            # FALLBACK: If no pattern matched, check for structural markers
+            # If message has (ID: number) and contains "delete" and ends with ? or !
+            if not has_delete_phrase:
+                has_id = re.search(r'\(ID:\s*\d+\)', assistant_response)
+                has_delete_word = re.search(r'\bdelete\b', assistant_response, re.IGNORECASE)
+                has_question = assistant_response.rstrip().endswith(('?', '!'))
+                has_delete_phrase = bool(has_id and has_delete_word and has_question)
+                if has_delete_phrase:
+                    logger.info(f"[PENDING ACTION DETECTION] Using fallback pattern (ID + delete + ?/!)")
+
+            logger.info(f"[PENDING ACTION DETECTION] Response: '{assistant_response[:100]}...'")
+            logger.info(f"[PENDING ACTION DETECTION] Delete phrase detected: {has_delete_phrase}")
+
+            if has_delete_phrase:
+                # Extract task ID from confirmation message - try multiple patterns
+                id_patterns = [
+                    r'\(ID:\s*(\d+)\)',           # (ID: 42) or (ID:42)
+                    r'ID[:\s]+(\d+)',             # ID: 42 or ID 42
+                    r'task[:\s#]+(\d+)',          # task: 42, task #42, task 42
+                    r'\[(?:task|id):\s*(\d+)\]', # [task: 42] or [id: 42]
+                    r'#(\d+)',                    # #42
+                ]
+
+                match = None
+                for pattern in id_patterns:
+                    match = re.search(pattern, assistant_response, re.IGNORECASE)
+                    if match:
+                        logger.debug(f"[PENDING ACTION] Task ID matched with pattern: {pattern}")
+                        break
+
                 if match:
                     task_id_str = match.group(1)
-                    # Try to find task title in message
-                    title_match = re.search(r"'([^']+)'", assistant_response)
-                    task_title = title_match.group(1) if title_match else "this task"
+                    # Try to find task title in message - much more flexible matching
+                    title_patterns = [
+                        r"'([^']+)'",                                  # 'task title'
+                        r'"([^"]+)"',                                  # "task title"
+                        r'(?:called|named|titled|is)\s+([^()\n]+?)(?:\s*\(|$)',  # called/named/titled/is [title] (
+                        r'task\s+(?:(?:called|named)\s+)?([^()\n]+?)(?:\s*(?:with|ID|\()|$)',  # task [title] with/ID/(
+                        r'found\s+(?:the\s+)?(?:task|item)\s+(?:called|named)?\s*([^()\n]+?)(?:\s*\(|$)',  # found task [title] (
+                    ]
 
-                    pending_action = {
-                        "type": "delete_task",
-                        "task_id": int(task_id_str),
-                        "task_title": task_title,
-                        "awaiting_confirmation": True,
-                        "created_at": datetime.utcnow().isoformat()
-                    }
-                    logger.info(f"[PENDING ACTION] Detected confirmation request for task_id={pending_action['task_id']}")
+                    task_title = "this task"
+                    for title_pattern in title_patterns:
+                        title_match = re.search(title_pattern, assistant_response, re.IGNORECASE)
+                        if title_match:
+                            candidate_title = title_match.group(1).strip().strip('.,!?')
+                            # Only accept if it's a reasonable length and doesn't contain too many special delimiters
+                            if candidate_title and 2 <= len(candidate_title) <= 100 and candidate_title != "Delete":
+                                task_title = candidate_title
+                                logger.debug(f"[PENDING ACTION] Task title matched: '{task_title}'")
+                                break
+
+                    try:
+                        task_id_int = int(task_id_str)
+                        if task_id_int <= 0:
+                            raise ValueError(f"Invalid task_id: {task_id_int} (must be > 0)")
+                        pending_action = {
+                            "type": "delete_task",
+                            "task_id": task_id_int,
+                            "task_title": task_title,
+                            "awaiting_confirmation": True,
+                            "created_at": datetime.utcnow().isoformat()
+                        }
+                        logger.info(f"[PENDING ACTION] ✅ Detected deletion confirmation request: task_id={task_id_int}, title='{task_title}'")
+                    except (ValueError, TypeError) as e:
+                        logger.warning(f"[PENDING ACTION] ⚠️ Failed to parse task_id '{task_id_str}': {e}")
+                else:
+                    logger.warning(f"[PENDING ACTION] ⚠️ Delete phrase detected but no task ID found in response. This will require user to clarify.")
 
             # T025: Parse tool calls from agent result to determine action type
             action = "conversation"  # Default action
@@ -603,74 +879,82 @@ Be friendly and natural while staying focused on task management."""
             # Extract tool calls from result new_items
             if result and hasattr(result, 'new_items') and result.new_items:
                 for item in result.new_items:
-                    # Handle ToolCallItem (the tool call itself)
-                    # Production-safe extraction for OpenAI Responses API ResponseFunctionToolCall
-                    if isinstance(item, ToolCallItem):
-                        tool_name = ""
-                        tool_args_str = ""
+                    try:
+                        # Handle ToolCallItem (the tool call itself)
+                        # Production-safe extraction for OpenAI Responses API ResponseFunctionToolCall
+                        if isinstance(item, ToolCallItem):
+                            tool_name = ""
+                            tool_args_str = ""
 
-                        # NEW API: ResponseFunctionToolCall has .name and .arguments as direct attributes
-                        # Defensive extraction to handle both old and new API formats
-                        if hasattr(item.raw_item, 'name'):
-                            # New Responses API: Direct attribute access
-                            tool_name = getattr(item.raw_item, 'name', '')
-                            tool_args_str = getattr(item.raw_item, 'arguments', '')
-                        elif hasattr(item.raw_item, 'function') and hasattr(item.raw_item.function, 'name'):
-                            # Old ChatCompletion API: Nested structure (fallback, may be removed later)
-                            tool_name = item.raw_item.function.name
-                            tool_args_str = item.raw_item.function.arguments
-                        else:
-                            # Unknown format: log and skip
-                            logger.warning(
-                                f"[TOOL CALL TRACKING] Unknown tool call format for item type {type(item.raw_item).__name__}, "
-                                f"user_id={user_id}, conversation_id={conversation_id}"
-                            )
-                            continue
+                            # NEW API: ResponseFunctionToolCall has .name and .arguments as direct attributes
+                            # Defensive extraction to handle both old and new API formats
+                            if hasattr(item.raw_item, 'name'):
+                                # New Responses API: Direct attribute access
+                                tool_name = getattr(item.raw_item, 'name', '')
+                                tool_args_str = getattr(item.raw_item, 'arguments', '')
+                            elif hasattr(item.raw_item, 'function') and hasattr(item.raw_item.function, 'name'):
+                                # Old ChatCompletion API: Nested structure (fallback, may be removed later)
+                                tool_name = item.raw_item.function.name
+                                tool_args_str = item.raw_item.function.arguments
+                            else:
+                                # Unknown format: log and skip
+                                logger.warning(
+                                    f"[TOOL CALL TRACKING] Unknown tool call format for item type {type(item.raw_item).__name__}, "
+                                    f"user_id={user_id}, conversation_id={conversation_id}"
+                                )
+                                continue
 
-                        # Parse arguments to extract task_id if present
-                        tool_args = {}
-                        try:
-                            tool_args = json.loads(tool_args_str) if tool_args_str else {}
-                        except json.JSONDecodeError:
-                            logger.warning(f"[TOOL CALL TRACKING] Failed to parse tool arguments for tool={tool_name}, user_id={user_id}, args_str={tool_args_str[:100]}")
+                            # Safely convert to string if needed
+                            tool_name = str(tool_name) if tool_name else ""
+                            tool_args_str = str(tool_args_str) if tool_args_str else ""
 
-                        # Log tool call details
-                        logger.info(f"[TOOL CALL TRACKING] AI tool call: tool={tool_name}, arguments={tool_args}, user_id={user_id}, conversation_id={conversation_id}")
+                            # Parse arguments to extract task_id if present
+                            tool_args = {}
+                            try:
+                                tool_args = json.loads(tool_args_str) if tool_args_str else {}
+                            except (json.JSONDecodeError, TypeError) as e:
+                                logger.warning(f"[TOOL CALL TRACKING] Failed to parse tool arguments for tool={tool_name}, user_id={user_id}, error={type(e).__name__}")
 
-                        # Store tool call for metadata
-                        tool_calls_metadata.append({
-                            "name": tool_name,
-                            "arguments": tool_args
-                        })
+                            # Log tool call details
+                            logger.info(f"[TOOL CALL TRACKING] AI tool call: tool={tool_name}, arguments={tool_args}, user_id={user_id}, conversation_id={conversation_id}")
 
-                        # T025: Map tool calls to action types based on contract/chat-api.yaml
-                        # Priority given to task modification actions over list operations
-                        if tool_name == "add_task" and action == "conversation":
-                            action = "task_created"
-                            logger.info(f"[ACTION DETECTION] Detected action=task_created, title={tool_args.get('title')}, priority={tool_args.get('priority')}, user_id={user_id}")
-                            # Extract task_id from the returned task object if available
-                            # Note: The tool returns a string, but we'd need to parse it
-                            # For now, we'll rely on the frontend refetching the task list
-                        elif tool_name == "update_task" and action not in ["task_created", "task_deleted"]:
-                            action = "task_updated"
-                            task_id = tool_args.get("task_id")
-                            logger.info(f"[ACTION DETECTION] Detected action=task_updated, task_id={task_id}, fields={list(tool_args.keys())}, user_id={user_id}")
-                        elif tool_name == "complete_task" and action not in ["task_created", "task_updated", "task_deleted"]:
-                            action = "task_completed"
-                            task_id = tool_args.get("task_id")
-                            logger.info(f"[ACTION DETECTION] Detected action=task_completed, task_id={task_id}, user_id={user_id}")
-                        elif tool_name == "uncomplete_task" and action not in ["task_created", "task_updated", "task_deleted"]:
-                            action = "task_uncompleted"
-                            task_id = tool_args.get("task_id")
-                            logger.info(f"[ACTION DETECTION] Detected action=task_uncompleted, task_id={task_id}, user_id={user_id}")
-                        elif tool_name == "delete_task" and action not in ["task_created", "task_updated"]:
-                            action = "task_deleted"
-                            task_id = tool_args.get("task_id")
-                            logger.info(f"[ACTION DETECTION] Detected action=task_deleted, task_id={task_id}, user_id={user_id}")
-                        elif tool_name == "list_tasks" and action == "conversation":
-                            action = "tasks_listed"
-                            filters = {k: v for k, v in tool_args.items() if v is not None}
-                            logger.info(f"[ACTION DETECTION] Detected action=tasks_listed, filters={filters}, user_id={user_id}")
+                            # Store tool call for metadata
+                            tool_calls_metadata.append({
+                                "name": tool_name,
+                                "arguments": tool_args
+                            })
+
+                            # T025: Map tool calls to action types based on contract/chat-api.yaml
+                            # Priority given to task modification actions over list operations
+                            if tool_name == "add_task" and action == "conversation":
+                                action = "task_created"
+                                logger.info(f"[ACTION DETECTION] Detected action=task_created, title={tool_args.get('title')}, priority={tool_args.get('priority')}, user_id={user_id}")
+                                # Extract task_id from the returned task object if available
+                                # Note: The tool returns a string, but we'd need to parse it
+                                # For now, we'll rely on the frontend refetching the task list
+                            elif tool_name == "update_task" and action not in ["task_created", "task_deleted"]:
+                                action = "task_updated"
+                                task_id = tool_args.get("task_id")
+                                logger.info(f"[ACTION DETECTION] Detected action=task_updated, task_id={task_id}, fields={list(tool_args.keys())}, user_id={user_id}")
+                            elif tool_name == "complete_task" and action not in ["task_created", "task_updated", "task_deleted"]:
+                                action = "task_completed"
+                                task_id = tool_args.get("task_id")
+                                logger.info(f"[ACTION DETECTION] Detected action=task_completed, task_id={task_id}, user_id={user_id}")
+                            elif tool_name == "uncomplete_task" and action not in ["task_created", "task_updated", "task_deleted"]:
+                                action = "task_uncompleted"
+                                task_id = tool_args.get("task_id")
+                                logger.info(f"[ACTION DETECTION] Detected action=task_uncompleted, task_id={task_id}, user_id={user_id}")
+                            elif tool_name == "delete_task" and action not in ["task_created", "task_updated"]:
+                                action = "task_deleted"
+                                task_id = tool_args.get("task_id")
+                                logger.info(f"[ACTION DETECTION] Detected action=task_deleted, task_id={task_id}, user_id={user_id}")
+                            elif tool_name == "list_tasks" and action == "conversation":
+                                action = "tasks_listed"
+                                filters = {k: v for k, v in tool_args.items() if v is not None}
+                                logger.info(f"[ACTION DETECTION] Detected action=tasks_listed, filters={filters}, user_id={user_id}")
+                    except Exception as e:
+                        logger.error(f"[TOOL CALL TRACKING] Error processing tool call item: {type(e).__name__}: {e}", exc_info=True)
+                        continue
 
             # Log summary of action detection
             if tool_calls_metadata:
@@ -689,7 +973,12 @@ Be friendly and natural while staying focused on task management."""
 
             # NEW: Add pending action if detected
             if pending_action:
+                logger.info(f"[PENDING ACTION STORAGE] ✅ Adding pending_action to metadata: {pending_action}")
                 metadata["pending_action"] = pending_action
+            else:
+                logger.info(f"[PENDING ACTION STORAGE] ⚠️ No pending_action to store (pending_action is None)")
+
+            logger.info(f"[METADATA] Final metadata to store: {list(metadata.keys())} - pending_action={'pending_action' in metadata}")
 
             # Step 8: Store assistant message
             assistant_msg = ChatService.store_message(
@@ -712,33 +1001,45 @@ Be friendly and natural while staying focused on task management."""
 
         except Exception as e:
             # Log error with full stack trace
+            error_type = type(e).__name__
+            error_message = str(e)
+            conversation_id_safe = conversation.id if 'conversation' in locals() else 0
+
             logger.error(
                 f"[ERROR] Exception during message processing: user_id={user_id}, "
-                f"conversation_id={conversation.id if 'conversation' in locals() else 'unknown'}, "
-                f"error_type={type(e).__name__}, error_message={str(e)}",
+                f"conversation_id={conversation_id_safe}, "
+                f"error_type={error_type}, error_message={error_message[:200]}",
                 exc_info=True
             )
 
-            # Return error response to user
+            # Prepare error response
+            user_facing_message = "I'm sorry, I encountered an error processing your request. Please try again."
+
             error_response = ChatResponse(
-                response="I'm sorry, I encountered an error processing your request. Please try again.",
-                conversation_id=conversation.id if 'conversation' in locals() else 0,
+                response=user_facing_message,
+                conversation_id=conversation_id_safe,
                 action=None,
                 task_id=None
             )
 
             # Try to store error message if conversation exists
-            if 'conversation' in locals():
+            if 'conversation' in locals() and conversation and conversation.id:
                 try:
+                    error_metadata = {
+                        "error": error_message[:500],  # Limit error message length
+                        "error_type": error_type
+                    }
+
                     error_msg = ChatService.store_message(
                         conversation_id=conversation.id,
                         role="assistant",
-                        content=error_response.response,
-                        metadata={"error": str(e)},
+                        content=user_facing_message,
+                        metadata=error_metadata,
                         session=session
                     )
                     logger.info(f"[MESSAGE STORAGE] Stored error message message_id={error_msg.id}, conversation_id={conversation.id}, user_id={user_id}")
                 except Exception as store_error:
-                    logger.error(f"[ERROR] Failed to store error message: user_id={user_id}, conversation_id={conversation.id}, error={store_error}", exc_info=True)
+                    logger.error(f"[ERROR] Failed to store error message: user_id={user_id}, conversation_id={conversation.id}, error={type(store_error).__name__}: {str(store_error)[:100]}", exc_info=True)
 
+            # Always raise to maintain error handling contract
             raise
