@@ -35,6 +35,11 @@ os.environ['MCP_NO_SERVER'] = '1'
 import warnings
 warnings.filterwarnings('ignore', message='.*Unable to add filesystem.*')
 
+# Suppress other MCP-related warnings
+warnings.filterwarnings('ignore', category=RuntimeWarning)
+warnings.filterwarnings('ignore', message='.*MCP.*')
+warnings.filterwarnings('ignore', message='.*filesystem.*')
+
 # Confirmation detection patterns for pending action handler
 AFFIRMATIVE_PATTERNS = {
     "yes", "yeah", "yep", "yup",
@@ -292,13 +297,14 @@ Be friendly and natural while staying focused on task management."""
             # STEP 2: Extract metadata and check for pending action
             metadata = last_assistant_msg.get_metadata()
             if not metadata:
-                logger.info(f"[PENDING ACTION STATE MACHINE] No metadata on last assistant message, user_id={user_id}, conversation_id={conversation_id}")
+                logger.warning(f"[PENDING ACTION STATE MACHINE] ❌ No metadata on last assistant message (metadata_json={last_assistant_msg.metadata_json}), user_id={user_id}, conversation_id={conversation_id}")
                 return None
 
-            logger.debug(f"[PENDING ACTION STATE MACHINE] Metadata keys found: {list(metadata.keys())}, user_id={user_id}")
+            logger.info(f"[PENDING ACTION STATE MACHINE] Metadata retrieved: keys={list(metadata.keys())}, user_id={user_id}")
 
             if "pending_action" not in metadata:
-                logger.info(f"[PENDING ACTION STATE MACHINE] No pending_action in metadata. Available keys: {list(metadata.keys())}, user_id={user_id}")
+                logger.warning(f"[PENDING ACTION STATE MACHINE] ❌ NO PENDING_ACTION in metadata! Keys present: {list(metadata.keys())}, user_id={user_id}")
+                logger.warning(f"[PENDING ACTION STATE MACHINE] Full metadata: {metadata}")
                 return None
 
             logger.info(f"[PENDING ACTION STATE MACHINE] ✅ Found pending_action in metadata!")
@@ -507,10 +513,23 @@ Be friendly and natural while staying focused on task management."""
         # Set metadata using the method (handles JSON serialization)
         if metadata:
             message.set_metadata(metadata)
+            logger.debug(f"[MESSAGE STORAGE] Set metadata on message: keys={list(metadata.keys())}")
+            if "pending_action" in metadata:
+                logger.info(f"[MESSAGE STORAGE] 🔴 PENDING_ACTION STORED: {metadata['pending_action']}")
 
         session.add(message)
         session.commit()
         session.refresh(message)
+
+        # CRITICAL: Verify metadata was actually persisted to database
+        stored_metadata = message.get_metadata()
+        if metadata and stored_metadata is None:
+            logger.error(f"[MESSAGE STORAGE] ❌ CRITICAL: Metadata was lost during storage! Expected: {list(metadata.keys())}")
+        elif metadata and "pending_action" in metadata:
+            if "pending_action" not in stored_metadata:
+                logger.error(f"[MESSAGE STORAGE] ❌ CRITICAL: pending_action lost during serialization!")
+            else:
+                logger.info(f"[MESSAGE STORAGE] ✅ pending_action verified in database: {stored_metadata['pending_action']}")
 
         logger.info(f"Stored {role} message {message.id} in conversation {conversation_id}")
 
@@ -650,15 +669,22 @@ Be friendly and natural while staying focused on task management."""
                         model="gpt-4o-mini",  # Use mini for cost efficiency and faster responses
                         mcp_servers=[],  # CRITICAL: Empty list - no MCP servers
                     )
-                    logger.info(f"[AGENT EXECUTION] Agent created successfully. Tools: {len(tools)}")
+                    logger.info(f"[AGENT EXECUTION] ✅ Agent created successfully. Tools: {len(tools)}")
 
                 except Exception as agent_init_error:
                     # Catch agent initialization errors even with stderr/stdout suppression
                     error_str = str(agent_init_error).lower()
-                    if any(keyword in error_str for keyword in ["filesystem", "illegal path", "mcp", "add filesystem"]):
-                        logger.warning(f"[AGENT EXECUTION] MCP error during agent init (suppressed): {type(agent_init_error).__name__}")
+                    error_type = type(agent_init_error).__name__
+
+                    # Check for MCP-related errors
+                    is_mcp_error = any(keyword in error_str for keyword in ["filesystem", "illegal path", "mcp", "add filesystem", "path"])
+
+                    if is_mcp_error:
+                        logger.warning(f"[AGENT EXECUTION] ⚠️ MCP filesystem error (suppressed): {error_type}: {agent_init_error}")
+                        logger.info(f"[AGENT EXECUTION] ℹ️ This is expected in serverless environments. Continuing with agent execution.")
                         agent = None  # Mark as failed but continue
                     else:
+                        logger.error(f"[AGENT EXECUTION] ❌ Non-MCP agent initialization error: {error_type}: {agent_init_error}")
                         raise
 
                 # Step 6: Create runner for agent execution
@@ -814,7 +840,8 @@ Be friendly and natural while staying focused on task management."""
             ]
 
             # Check if response contains any delete confirmation pattern
-            has_delete_phrase = any(re.search(pattern, assistant_response, re.IGNORECASE)
+            # Use DOTALL flag to make . match newlines (important for multi-line responses)
+            has_delete_phrase = any(re.search(pattern, assistant_response, re.IGNORECASE | re.DOTALL)
                                    for pattern in delete_confirmation_patterns)
 
             # FALLBACK: If no pattern matched, check for structural markers
