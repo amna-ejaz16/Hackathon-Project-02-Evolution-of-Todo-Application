@@ -316,7 +316,7 @@ export default function ChatWidget({ onTaskChange }: ChatWidgetProps) {
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 20, scale: 0.95 }}
             transition={{ duration: 0.3 }}
-            className="fixed z-50 bg-gray-900/90 backdrop-blur-xl border border-purple-500/20 shadow-xl shadow-purple-500/20 md:bottom-6 md:right-6 md:w-[380px] md:h-[560px] md:max-h-[560px] md:rounded-2xl bottom-0 inset-x-0 h-[85vh] rounded-t-2xl"
+            className="fixed z-50 bg-gray-900/90 backdrop-blur-xl border border-purple-500/20 shadow-xl shadow-purple-500/20 bottom-0 inset-x-0 h-[85vh] rounded-t-2xl md:bottom-6 md:right-6 md:left-auto md:inset-x-auto md:w-[380px] md:h-[560px] md:max-h-[560px] md:rounded-2xl"
           >
             <div className="flex flex-col h-full overflow-hidden">
               {/* Header with drag capability for mobile */}
