@@ -903,13 +903,13 @@ Be friendly and natural while staying focused on task management."""
                     logger.info(f"[PENDING ACTION] Extracted task_id_str: {task_id_str}")
 
                     # Try to find task title in message - much more flexible matching
+                    # Handles both ASCII and Unicode quotes flexibly
                     title_patterns = [
-                        r"'([^']+)'",                                  # 'task title'
-                        r'"([^"]+)"',                                  # "task title"
+                        r"['\"]([^'\"]+)['\"]",                       # 'task title' or "task title"
                         r'(?:called|named|titled|is)\s+([^()\n]+?)(?:\s*\(|$)',  # called/named/titled/is [title] (
                         r'task\s+(?:(?:called|named)\s+)?([^()\n]+?)(?:\s*(?:with|ID|\(|#)|$)',  # task [title] with/ID/(/#
                         r'found\s+(?:the\s+)?(?:task|item)\s+(?:called|named)?\s*([^()\n]+?)(?:\s*\(|$)',  # found task [title] (
-                        r'(?:the|your)\s+task\s+"?([^"()\n]+?)"?(?:\s*\(|$)',  # the task "title" or the task title (
+                        r'(?:the|your)\s+task\s+["\']?([^()\n"\']+)["\']?(?:\s*\(|$)',  # the task "title" or the task title (
                     ]
 
                     task_title = "this task"
