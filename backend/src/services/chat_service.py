@@ -37,13 +37,20 @@ warnings.filterwarnings('ignore', message='.*Unable to add filesystem.*')
 
 # Confirmation detection patterns for pending action handler
 AFFIRMATIVE_PATTERNS = {
-    "yes", "confirm", "ok", "sure", "yeah", "yep",
-    "proceed", "delete it", "go ahead", "do it"
+    "yes", "yeah", "yep", "yup",
+    "ok", "okay", "alright", "sure", "sounds good",
+    "confirm", "confirmed",
+    "proceed", "go", "go ahead", "go for it",
+    "delete it", "delete", "do it", "do that",
+    "correct", "right", "let's do it"
 }
 
 NEGATIVE_PATTERNS = {
-    "no", "cancel", "stop", "don't", "nope",
-    "nevermind", "never mind", "abort"
+    "no", "nope", "nah",
+    "cancel", "stop", "abort",
+    "don't", "dont",
+    "nevermind", "never mind",
+    "not", "keep it", "leave it", "skip"
 }
 
 
@@ -276,10 +283,11 @@ Be friendly and natural while staying focused on task management."""
             ).first()
 
             if not last_assistant_msg:
-                logger.info(f"[PENDING ACTION STATE MACHINE] No last assistant message found, user_id={user_id}, conversation_id={conversation_id}")
+                logger.warning(f"[PENDING ACTION STATE MACHINE] ⚠️ No last assistant message found, user_id={user_id}, conversation_id={conversation_id}")
                 return None
 
-            logger.info(f"[PENDING ACTION STATE MACHINE] Retrieved last assistant message id={last_assistant_msg.id}, content_preview={last_assistant_msg.content[:80]}")
+            content_preview = last_assistant_msg.content[:100] if last_assistant_msg.content else "(empty)"
+            logger.info(f"[PENDING ACTION STATE MACHINE] Retrieved last assistant message id={last_assistant_msg.id}, content_preview={content_preview}, has_metadata_json={bool(last_assistant_msg.metadata_json)}")
 
             # STEP 2: Extract metadata and check for pending action
             metadata = last_assistant_msg.get_metadata()
@@ -731,11 +739,18 @@ Be friendly and natural while staying focused on task management."""
                 # Build full conversation context including the new user message
                 full_context = context_messages + [{"role": "user", "content": user_message}]
 
-                # Execute agent with just the current user message
-                # The agent will have access to task tools but NO filesystem access
+                # Log the context that will be provided to the agent
+                logger.info(f"[AGENT EXECUTION] Providing {len(full_context)} messages to agent context (including current user message)")
+                if full_context:
+                    context_summary = [f"{m['role']}: {m['content'][:50]}..." for m in full_context]
+                    logger.debug(f"[AGENT EXECUTION] Context messages: {context_summary}")
+
+                # Execute agent with conversation history
+                # The OpenAI Agents SDK can accept messages parameter for conversation context
                 result = await runner.run(
                     starting_agent=agent,
                     input=user_message,
+                    messages=full_context,  # Pass full conversation history for context
                 )
                 logger.info(f"[AGENT EXECUTION] Agent completed successfully")
 
@@ -788,14 +803,15 @@ Be friendly and natural while staying focused on task management."""
             pending_action = None
             delete_confirmation_patterns = [
                 r"are\s+you\s+sure.*delete",           # "are you sure ... delete"
-                r"do\s+you.*want.*delete",             # "do you want to delete" or "do you want me to delete"
-                r"should\s+i\s+delete",                # "should i delete"
-                r"should\s+we\s+delete",               # "should we delete"
+                r"do\s+you.*(?:want|like).*delete",    # "do you want to delete" / "do you like me to delete"
+                r"should\s+[iw]e.*delete",             # "should i/we delete"
                 r"confirm.*delete",                    # "confirm delete"
-                r"delete.*confirm",                    # "delete confirm"
+                r"delete.*(?:confirm|ok|okay)",        # "delete and confirm"
                 r"want\s+(?:to\s+)?delete",           # "want to delete" or "want delete"
-                r"go\s+ahead.*delete",                 # "go ahead and delete"
-                r"proceed.*delete",                    # "proceed with delete"
+                r"(?:go\s+ahead|proceed).*delete",     # "go ahead/proceed with delete"
+                r"(?:really|actually)\s+delete",       # "really delete"
+                r"(?:shall|may)\s+[iw]e.*delete",      # "shall we delete" / "may I delete"
+                r"(?:alright|ok|okay).*delete",        # "ok to delete"
             ]
 
             # Check if response contains any delete confirmation pattern
@@ -816,31 +832,36 @@ Be friendly and natural while staying focused on task management."""
             logger.info(f"[PENDING ACTION DETECTION] Delete phrase detected: {has_delete_phrase}")
 
             if has_delete_phrase:
-                # Extract task ID from confirmation message - try multiple patterns
+                # Extract task ID from confirmation message - try multiple patterns with improved coverage
                 id_patterns = [
-                    r'\(ID:\s*(\d+)\)',           # (ID: 42) or (ID:42)
-                    r'ID[:\s]+(\d+)',             # ID: 42 or ID 42
-                    r'task[:\s#]+(\d+)',          # task: 42, task #42, task 42
-                    r'\[(?:task|id):\s*(\d+)\]', # [task: 42] or [id: 42]
-                    r'#(\d+)',                    # #42
+                    r'\(ID:\s*(\d+)\)',                  # (ID: 42) or (ID:42)
+                    r'(?:ID|id)[:\s]+(\d+)(?:[\s.!?)]|$)',  # ID: 42 or ID 42 (with proper boundary)
+                    r'task\s+(?:ID\s+)?#?(\d+)',         # task ID 42 or task #42
+                    r'(?:task|Task)\s+[^(]*#(\d+)',      # task xyz #42
+                    r'\[(?:task|id|ID):\s*(\d+)\]',      # [task: 42]
+                    r'(?:^|\s)#(\d+)(?:\s|$)',           # standalone #42
+                    r'task\s+(?:with\s+)?id\s+(\d+)',    # task with id 42
                 ]
 
                 match = None
                 for pattern in id_patterns:
                     match = re.search(pattern, assistant_response, re.IGNORECASE)
                     if match:
-                        logger.debug(f"[PENDING ACTION] Task ID matched with pattern: {pattern}")
+                        logger.info(f"[PENDING ACTION] Task ID matched with pattern: {pattern}")
                         break
 
                 if match:
                     task_id_str = match.group(1)
+                    logger.info(f"[PENDING ACTION] Extracted task_id_str: {task_id_str}")
+
                     # Try to find task title in message - much more flexible matching
                     title_patterns = [
                         r"'([^']+)'",                                  # 'task title'
                         r'"([^"]+)"',                                  # "task title"
                         r'(?:called|named|titled|is)\s+([^()\n]+?)(?:\s*\(|$)',  # called/named/titled/is [title] (
-                        r'task\s+(?:(?:called|named)\s+)?([^()\n]+?)(?:\s*(?:with|ID|\()|$)',  # task [title] with/ID/(
+                        r'task\s+(?:(?:called|named)\s+)?([^()\n]+?)(?:\s*(?:with|ID|\(|#)|$)',  # task [title] with/ID/(/#
                         r'found\s+(?:the\s+)?(?:task|item)\s+(?:called|named)?\s*([^()\n]+?)(?:\s*\(|$)',  # found task [title] (
+                        r'(?:the|your)\s+task\s+"?([^"()\n]+?)"?(?:\s*\(|$)',  # the task "title" or the task title (
                     ]
 
                     task_title = "this task"
@@ -851,7 +872,7 @@ Be friendly and natural while staying focused on task management."""
                             # Only accept if it's a reasonable length and doesn't contain too many special delimiters
                             if candidate_title and 2 <= len(candidate_title) <= 100 and candidate_title != "Delete":
                                 task_title = candidate_title
-                                logger.debug(f"[PENDING ACTION] Task title matched: '{task_title}'")
+                                logger.info(f"[PENDING ACTION] Task title matched: '{task_title}'")
                                 break
 
                     try:
@@ -867,7 +888,8 @@ Be friendly and natural while staying focused on task management."""
                         }
                         logger.info(f"[PENDING ACTION] ✅ Detected deletion confirmation request: task_id={task_id_int}, title='{task_title}'")
                     except (ValueError, TypeError) as e:
-                        logger.warning(f"[PENDING ACTION] ⚠️ Failed to parse task_id '{task_id_str}': {e}")
+                        logger.error(f"[PENDING ACTION] ⚠️ Failed to parse task_id '{task_id_str}': {e}")
+                        pending_action = None
                 else:
                     logger.warning(f"[PENDING ACTION] ⚠️ Delete phrase detected but no task ID found in response. This will require user to clarify.")
 
