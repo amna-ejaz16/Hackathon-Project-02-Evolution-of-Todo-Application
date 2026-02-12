@@ -486,11 +486,13 @@ Be friendly and natural while staying focused on task management."""
                 )
 
             # Not a confirmation or cancellation - proceed to agent
+            logger.warning(f"🔴 [PENDING ACTION STATE MACHINE] Returning None (not a confirmation/cancellation)")
             return None
 
         except Exception as e:
             # Fail gracefully if pending action handling has unexpected errors
-            logger.error(f"[PENDING ACTION] Unexpected error in handle_pending_action: {type(e).__name__}: {e}", exc_info=True)
+            logger.error(f"🔴 [PENDING ACTION] Unexpected error in handle_pending_action: {type(e).__name__}: {e}", exc_info=True)
+            logger.error(f"🔴 [PENDING ACTION] Stack trace: {e}")
             # Don't return a response - let it proceed to agent
             return None
 
@@ -635,10 +637,11 @@ Be friendly and natural while staying focused on task management."""
             )
 
             if pending_response:
-                logger.info(f"[PENDING ACTION] Handled pending action successfully, skipping agent execution entirely")
+                logger.warning(f"✅ [PENDING ACTION] SUCCESS! Handled pending action, SKIPPING agent execution")
+                logger.warning(f"✅ [PENDING ACTION] Returning: {pending_response.action}")
                 return pending_response
 
-            logger.debug(f"[EXECUTION FLOW] No pending action found, proceeding to agent execution")
+            logger.warning(f"🔴 [EXECUTION FLOW] handle_pending_action returned None, proceeding to AGENT EXECUTION")
 
             # Step 3: Fetch context (last 20 messages for AI)
             context_messages = ChatService.get_context_messages(conversation_id, session, limit=20)
