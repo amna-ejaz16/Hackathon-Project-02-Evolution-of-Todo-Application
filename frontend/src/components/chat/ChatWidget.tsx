@@ -70,6 +70,15 @@ export default function ChatWidget({ onTaskChange }: ChatWidgetProps) {
     }
   }, [isOpen, historyLoaded])
 
+  // Reset chat state when panel closes (FR-026: fresh session on reopen)
+  useEffect(() => {
+    if (!isOpen) {
+      setMessages([])
+      setHistoryLoaded(true)  // Prevent reloading history on next open
+      setConversationId(null)
+    }
+  }, [isOpen])
+
   const loadChatHistory = async () => {
     try {
       const data = await api.get<HistoryResponse>('/api/chat/history')
@@ -102,6 +111,22 @@ export default function ChatWidget({ onTaskChange }: ChatWidgetProps) {
   }
 
   const handleSendMessage = async (message: string) => {
+    // Validate input
+    if (!message || message.trim().length === 0) {
+      logError(new Error('Empty message'), {
+        action: 'sendMessage',
+        component: 'ChatWidget',
+        reason: 'empty_message',
+        timestamp: new Date().toISOString(),
+      })
+      return
+    }
+
+    // Ensure chat is open (UI stability - prevent closing on error)
+    if (!isOpen) {
+      setIsOpen(true)
+    }
+
     // Create temp user message
     const tempUserMessage: Message = {
       id: Date.now(),
@@ -109,29 +134,52 @@ export default function ChatWidget({ onTaskChange }: ChatWidgetProps) {
       content: message,
       created_at: new Date().toISOString(),
     }
-    setMessages((prev) => [...prev, tempUserMessage])
+
+    // Add user message to UI
+    try {
+      setMessages((prev) => [...prev, tempUserMessage])
+    } catch (e) {
+      console.warn('Failed to add user message to state', e)
+    }
+
     setIsSending(true)
 
     try {
       const data = await api.post<ChatApiResponse>('/api/chat', { message })
 
-      // Append assistant response
+      // Validate API response
+      if (!data || typeof data !== 'object') {
+        throw new Error('Invalid API response format')
+      }
+
+      // Safely append assistant response
       const assistantMessage: Message = {
         id: Date.now() + 1,
         role: 'assistant',
-        content: data.response,
+        content: data.response || 'No response received',
         created_at: new Date().toISOString(),
       }
-      setMessages((prev) => [...prev, assistantMessage])
 
-      // Update conversation ID
-      if (data.conversation_id) {
-        setConversationId(data.conversation_id)
+      try {
+        setMessages((prev) => [...prev, assistantMessage])
+      } catch (e) {
+        console.warn('Failed to add assistant message to state', e)
+      }
+
+      // Update conversation ID safely
+      if (data.conversation_id && typeof data.conversation_id === 'number') {
+        try {
+          setConversationId(data.conversation_id)
+        } catch (e) {
+          console.warn('Failed to update conversation ID', e)
+        }
       }
 
       // If action affects tasks, trigger refresh
+      // Validate action is a recognized type
       if (
         data.action &&
+        typeof data.action === 'string' &&
         [
           'task_created',
           'task_updated',
@@ -140,48 +188,87 @@ export default function ChatWidget({ onTaskChange }: ChatWidgetProps) {
           'task_deleted',
         ].includes(data.action)
       ) {
-        onTaskChange()
+        try {
+          onTaskChange()
+        } catch (e) {
+          console.warn('Failed to trigger task change', e)
+        }
       }
     } catch (error) {
-      // Log error with full details using error utility
-      const errorDetails = logError(error, {
-        action: 'sendMessage',
-        conversationId,
-        timestamp: new Date().toISOString(),
-      })
+      // Ensure error doesn't prevent UI from rendering
+      try {
+        // Log error with full details using error utility
+        const errorDetails = logError(error, {
+          action: 'sendMessage',
+          conversationId,
+          timestamp: new Date().toISOString(),
+        })
 
-      let errorContent = ERROR_MESSAGES.GENERIC
-      let shouldSuggestRefresh = false
+        let errorContent = ERROR_MESSAGES.GENERIC
+        let shouldSuggestRefresh = false
 
-      // Determine error type and set appropriate message
-      const status = errorDetails.status
+        // Determine error type and set appropriate message
+        const status = errorDetails?.status
+        const errorType = errorDetails?.type
 
-      if (status === 503) {
-        // Service unavailable - suggest retry
-        errorContent = ERROR_MESSAGES.SERVICE_UNAVAILABLE
-      } else if (status === 401) {
-        // Session expired - suggest refresh
-        errorContent = ERROR_MESSAGES.SESSION_EXPIRED
-        shouldSuggestRefresh = true
-      } else if (
-        errorDetails.type === 'NetworkError' ||
-        errorDetails.type === 'TypeError' ||
-        errorDetails.code === 'ERR_NETWORK'
-      ) {
-        // Network connectivity issue
-        errorContent = ERROR_MESSAGES.NETWORK_ERROR
+        if (status === 503) {
+          // Service unavailable - suggest retry
+          errorContent = ERROR_MESSAGES.SERVICE_UNAVAILABLE
+        } else if (status === 401 || status === 403) {
+          // Session expired or unauthorized - suggest refresh
+          errorContent = ERROR_MESSAGES.SESSION_EXPIRED
+          shouldSuggestRefresh = true
+        } else if (
+          status === 500 ||
+          status === 502 ||
+          status === 504
+        ) {
+          // Server errors - suggest retry
+          errorContent = "Server error. Please try again in a moment."
+        } else if (
+          errorType === 'NetworkError' ||
+          errorType === 'TypeError' ||
+          errorDetails?.code === 'ERR_NETWORK'
+        ) {
+          // Network connectivity issue
+          errorContent = ERROR_MESSAGES.NETWORK_ERROR
+        }
+
+        // Append error message with optional refresh suggestion
+        const errorMessage: Message = {
+          id: Date.now() + 1,
+          role: 'assistant',
+          content: shouldSuggestRefresh
+            ? `${errorContent}\n\nYou can refresh the page or try again later.`
+            : errorContent,
+          created_at: new Date().toISOString(),
+        }
+
+        // Safely append error message
+        setMessages((prev) => {
+          // Prevent duplicates in case of multiple error handling
+          const isDuplicate = prev.some((m) => m.id === errorMessage.id)
+          return isDuplicate ? prev : [...prev, errorMessage]
+        })
+      } catch (e) {
+        // Last resort: if error handling itself fails, just log it
+        console.error('Failed to handle chat error', e)
+
+        // Still try to add a generic error message
+        try {
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: Date.now() + 1,
+              role: 'assistant',
+              content: ERROR_MESSAGES.GENERIC,
+              created_at: new Date().toISOString(),
+            },
+          ])
+        } catch (innerE) {
+          console.error('Failed to add fallback error message', innerE)
+        }
       }
-
-      // Append error message with optional refresh suggestion
-      const errorMessage: Message = {
-        id: Date.now() + 1,
-        role: 'assistant',
-        content: shouldSuggestRefresh
-          ? `${errorContent}\n\nYou can refresh the page or try again later.`
-          : errorContent,
-        created_at: new Date().toISOString(),
-      }
-      setMessages((prev) => [...prev, errorMessage])
     } finally {
       setIsSending(false)
     }

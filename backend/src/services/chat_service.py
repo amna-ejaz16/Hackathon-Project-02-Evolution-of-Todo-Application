@@ -276,9 +276,11 @@ Be friendly and natural while staying focused on task management."""
             ChatResponse if pending action was handled, None otherwise
         """
         try:
-            logger.info(f"[PENDING ACTION STATE MACHINE] Entering pending action handler for user_id={user_id}, conversation_id={conversation_id}")
+            logger.warning(f"🔵 [PENDING ACTION STATE MACHINE] ENTERING handler for conversation_id={conversation_id}, user_id={user_id}")
+            logger.warning(f"🔵 [PENDING ACTION STATE MACHINE] User message: '{user_message}'")
 
             # STEP 1: Get last assistant message with metadata
+            logger.info(f"[PENDING ACTION STATE MACHINE] Step 1: Querying for last assistant message...")
             last_assistant_msg = session.exec(
                 select(Message)
                 .where(Message.conversation_id == conversation_id)
@@ -286,6 +288,8 @@ Be friendly and natural while staying focused on task management."""
                 .order_by(Message.created_at.desc())
                 .limit(1)
             ).first()
+
+            logger.warning(f"🔵 [PENDING ACTION STATE MACHINE] Query result: last_assistant_msg={last_assistant_msg is not None}")
 
             if not last_assistant_msg:
                 logger.warning(f"[PENDING ACTION STATE MACHINE] ⚠️ No last assistant message found, user_id={user_id}, conversation_id={conversation_id}")
@@ -303,11 +307,14 @@ Be friendly and natural while staying focused on task management."""
             logger.info(f"[PENDING ACTION STATE MACHINE] Metadata retrieved: keys={list(metadata.keys())}, user_id={user_id}")
 
             if "pending_action" not in metadata:
-                logger.warning(f"[PENDING ACTION STATE MACHINE] ❌ NO PENDING_ACTION in metadata! Keys present: {list(metadata.keys())}, user_id={user_id}")
-                logger.warning(f"[PENDING ACTION STATE MACHINE] Full metadata: {metadata}")
+                logger.error(f"🔴 [PENDING ACTION STATE MACHINE] CRITICAL: NO PENDING_ACTION in metadata!")
+                logger.error(f"    Keys present: {list(metadata.keys())}")
+                logger.error(f"    Full metadata: {metadata}")
+                logger.error(f"    Last message content: '{last_assistant_msg.content[:200]}'")
+                logger.error(f"    Last message metadata_json: {last_assistant_msg.metadata_json}")
                 return None
 
-            logger.info(f"[PENDING ACTION STATE MACHINE] ✅ Found pending_action in metadata!")
+            logger.warning(f"✅ [PENDING ACTION STATE MACHINE] FOUND pending_action in metadata!")
 
             pending = metadata.get("pending_action")
             if not pending or not isinstance(pending, dict):
@@ -326,12 +333,20 @@ Be friendly and natural while staying focused on task management."""
                 return None
 
             # STEP 3: Check user confirmation or cancellation
-            logger.info(f"[PENDING ACTION STATE MACHINE] Checking user message for confirmation/cancellation. Message: '{user_message}'")
+            logger.warning(f"🔵 [PENDING ACTION STATE MACHINE] Step 3: Checking user confirmation. Message: '{user_message}'")
 
             # Debug: Check confirmation function
             is_confirm = is_confirmation(user_message)
             is_cancel = is_cancellation(user_message)
-            logger.info(f"[PENDING ACTION STATE MACHINE] Confirmation check: is_confirmation={is_confirm}, is_cancellation={is_cancel}")
+            logger.warning(f"🔵 [PENDING ACTION STATE MACHINE] Confirmation check:")
+            logger.warning(f"     is_confirmation('{user_message}')={is_confirm}")
+            logger.warning(f"     is_cancellation('{user_message}')={is_cancel}")
+            logger.warning(f"     AFFIRMATIVE_PATTERNS={AFFIRMATIVE_PATTERNS}")
+            logger.warning(f"     Normalized message='{user_message.lower().strip().strip('.,!?')}'")
+
+            if not is_confirm and not is_cancel:
+                logger.warning(f"🔴 [PENDING ACTION STATE MACHINE] Message not recognized as confirmation or cancellation")
+                return None
 
             # Check for confirmation
             if is_confirm:
@@ -854,8 +869,15 @@ Be friendly and natural while staying focused on task management."""
                 if has_delete_phrase:
                     logger.info(f"[PENDING ACTION DETECTION] Using fallback pattern (ID + delete + ?/!)")
 
-            logger.info(f"[PENDING ACTION DETECTION] Response: '{assistant_response[:100]}...'")
+            logger.info(f"[PENDING ACTION DETECTION] Response length: {len(assistant_response)}")
+            logger.info(f"[PENDING ACTION DETECTION] Response preview: '{assistant_response[:150]}...'")
             logger.info(f"[PENDING ACTION DETECTION] Delete phrase detected: {has_delete_phrase}")
+
+            # DEBUG: Show which patterns were checked
+            if not has_delete_phrase:
+                for i, pattern in enumerate(delete_confirmation_patterns):
+                    match = re.search(pattern, assistant_response, re.IGNORECASE | re.DOTALL)
+                    logger.debug(f"[PENDING ACTION DETECTION] Pattern {i}: {pattern[:50]}... → {bool(match)}")
 
             if has_delete_phrase:
                 # Extract task ID from confirmation message - try multiple patterns with improved coverage
