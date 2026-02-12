@@ -1,6 +1,6 @@
-# Todo Application - Phase II: Full-Stack Web Application
+# Todo Application - Phase III: AI-Powered Chatbot
 
-A secure, multi-user todo application with authentication built using Next.js, FastAPI, Better Auth, and Neon PostgreSQL.
+A secure, multi-user todo application with AI-powered chatbot assistance, built using Next.js, FastAPI, Better Auth, OpenAI Agents SDK, and Neon PostgreSQL.
 
 ## Features
 
@@ -8,6 +8,8 @@ A secure, multi-user todo application with authentication built using Next.js, F
 - **Multi-User Support**: Complete user isolation - each user sees only their own tasks
 - **Full CRUD Operations**: Create, read, update, and delete tasks
 - **Task Management**: Mark tasks complete/incomplete, add descriptions
+- **AI Chatbot Assistant**: Context-aware AI chatbot powered by OpenAI Agents SDK
+- **Conversation History**: Persistent conversation storage per user
 - **Responsive UI**: Modern interface built with Next.js and Tailwind CSS
 - **Secure API**: JWT-protected endpoints with stateless authentication
 
@@ -15,8 +17,9 @@ A secure, multi-user todo application with authentication built using Next.js, F
 
 | Layer | Technology |
 |-------|------------|
-| Frontend | Next.js 15+ (App Router), React 19, Tailwind CSS |
-| Backend | Python FastAPI, SQLModel ORM |
+| Frontend | Next.js 16+ (App Router), React 19, Tailwind CSS, Framer Motion |
+| Backend | Python 3.11+ FastAPI, SQLModel ORM |
+| AI Engine | OpenAI Agents SDK (>= 0.8.0) |
 | Database | Neon Serverless PostgreSQL |
 | Authentication | Better Auth (frontend) + JWT verification (backend) |
 | ORM (Frontend) | Drizzle ORM |
@@ -51,6 +54,7 @@ A secure, multi-user todo application with authentication built using Next.js, F
 │   │   ├── api/
 │   │   │   ├── deps.py       # JWT auth dependency
 │   │   │   ├── tasks.py      # Task CRUD endpoints
+│   │   │   ├── chat.py       # Chat/Chatbot endpoints
 │   │   │   └── health.py     # Health check
 │   │   ├── core/
 │   │   │   ├── config.py     # Environment config
@@ -58,12 +62,31 @@ A secure, multi-user todo application with authentication built using Next.js, F
 │   │   │   └── security.py   # JWT verification
 │   │   ├── models/
 │   │   │   ├── task.py       # Task SQLModel
-│   │   │   └── user.py       # User model
-│   │   └── main.py           # FastAPI app
+│   │   │   ├── user.py       # User model
+│   │   │   ├── conversation.py # Conversation model
+│   │   │   └── message.py     # Message model
+│   │   ├── services/
+│   │   │   └── chat_service.py # AI Chatbot service with OpenAI Agents SDK
+│   │   └── main.py            # FastAPI app
 │   └── requirements.txt
 │
+├── frontend/                 # Next.js frontend application
+│   ├── src/
+│   │   ├── components/
+│   │   │   └── ChatBot/      # AI Chatbot UI components
+│   │   └── ...
+│   └── ...
+│
 └── specs/                    # Spec-Driven Development artifacts
-    └── 002-phase2-fullstack/
+    ├── 001-phase1-console-todo/
+    │   ├── spec.md
+    │   ├── plan.md
+    │   └── tasks.md
+    ├── 002-phase2-fullstack/
+    │   ├── spec.md
+    │   ├── plan.md
+    │   └── tasks.md
+    └── 003-phase3-ai-chatbot/
         ├── spec.md
         ├── plan.md
         └── tasks.md
@@ -71,12 +94,12 @@ A secure, multi-user todo application with authentication built using Next.js, F
 
 ## Setup Instructions
 
-### 1. Clone and Checkout Phase 2 Branch
+### 1. Clone and Checkout Phase 3 Branch
 
 ```bash
 git clone <repository-url>
 cd The-Evolution-of-Todo-Application
-git checkout 002-phase2-fullstack
+git checkout 003-phase3-ai-chatbot
 ```
 
 ### 2. Set Up Neon Database
@@ -100,6 +123,7 @@ NEXT_PUBLIC_BACKEND_URL=http://localhost:8000
 DATABASE_URL=postgresql://user:password@host/database?sslmode=require
 BETTER_AUTH_SECRET=your-secret-key-min-32-characters
 CORS_ORIGINS=http://localhost:3000
+OPENAI_API_KEY=your-openai-api-key
 ```
 
 > **Important**: Use the same `BETTER_AUTH_SECRET` in both frontend and backend for JWT verification.
@@ -159,9 +183,16 @@ Frontend will be available at: http://localhost:3000
 | GET | `/api/tasks/{id}` | Get task by ID |
 | PUT | `/api/tasks/{id}` | Update task |
 | DELETE | `/api/tasks/{id}` | Delete task |
+
+### Chatbot (FastAPI - Backend)
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/chat/message` | Send message to chatbot |
+| GET | `/api/chat/conversations` | Get all conversations (user-scoped) |
+| GET | `/api/chat/conversations/{id}` | Get conversation history |
 | GET | `/health` | Health check |
 
-All `/api/tasks` endpoints require `Authorization: Bearer <token>` header.
+All `/api/*` endpoints require `Authorization: Bearer <token>` header.
 
 ## Authentication Flow
 
@@ -174,12 +205,26 @@ All `/api/tasks` endpoints require `Authorization: Bearer <token>` header.
 6. Response returned → Only user's own data
 ```
 
+## AI Chatbot Features (Phase III)
+
+### Capabilities
+- **Context-Aware Assistance**: The chatbot understands your tasks and can help with task management
+- **Natural Language Interaction**: Ask questions and get AI-powered responses
+- **Task Context**: The AI has access to your current tasks for better assistance
+- **Conversation History**: All conversations are saved per user
+- **Persistent Storage**: Conversations stored in Neon PostgreSQL for future reference
+
+### Database Schema (Phase III)
+- **conversation** table: Stores conversation metadata (user_id, created_at, updated_at)
+- **message** table: Stores individual messages (conversation_id, role, content, created_at)
+
 ## Usage
 
 1. **Register**: Visit http://localhost:3000/signup
 2. **Sign In**: Visit http://localhost:3000/signin
 3. **Dashboard**: After login, manage your tasks at /dashboard
-4. **Sign Out**: Click sign out button to end session
+4. **Chat with AI**: Open the chatbot window (bottom-right corner) to interact with the AI assistant
+5. **Sign Out**: Click sign out button to end session
 
 ## Security Features
 
@@ -201,13 +246,13 @@ All `/api/tasks` endpoints require `Authorization: Bearer <token>` header.
 
 ## Phase Evolution
 
-| Phase | Description | Status |
-|-------|-------------|--------|
-| Phase I | In-memory console application | ✅ Complete (main branch) |
-| Phase II | Full-stack web application | ✅ Complete (this branch) |
-| Phase III | AI-powered chatbot | Planned |
-| Phase IV | Kubernetes deployment | Planned |
-| Phase V | Event-driven cloud architecture | Planned |
+| Phase | Description | Status | Branch |
+|-------|-------------|--------|--------|
+| Phase I | In-memory console application | ✅ Complete | `001-phase1-console-todo` |
+| Phase II | Full-stack web application | ✅ Complete | `002-phase2-fullstack` |
+| Phase III | AI-powered chatbot with OpenAI Agents | 🚀 In Progress | `003-phase3-ai-chatbot` |
+| Phase IV | Kubernetes deployment | Planned | TBD |
+| Phase V | Event-driven cloud architecture | Planned | TBD |
 
 ## Troubleshooting
 
@@ -219,6 +264,9 @@ All `/api/tasks` endpoints require `Authorization: Bearer <token>` header.
 | Database connection error | Verify `DATABASE_URL` format and Neon project is active |
 | CORS errors | Add frontend URL to `CORS_ORIGINS` in backend |
 | 401 on all requests | Check token is being sent in Authorization header |
+| Chatbot not responding | Verify `OPENAI_API_KEY` is set in backend `.env` |
+| Chat service error | Check that conversation and message tables exist in Neon database |
+| Chatbot window not visible | Ensure frontend is running and check browser console for errors |
 
 ## License
 
