@@ -307,12 +307,39 @@ Be friendly and natural while staying focused on task management."""
             logger.info(f"[PENDING ACTION STATE MACHINE] Metadata retrieved: keys={list(metadata.keys())}, user_id={user_id}")
 
             if "pending_action" not in metadata:
-                logger.error(f"🔴 [PENDING ACTION STATE MACHINE] CRITICAL: NO PENDING_ACTION in metadata!")
-                logger.error(f"    Keys present: {list(metadata.keys())}")
-                logger.error(f"    Full metadata: {metadata}")
-                logger.error(f"    Last message content: '{last_assistant_msg.content[:200]}'")
-                logger.error(f"    Last message metadata_json: {last_assistant_msg.metadata_json}")
-                return None
+                logger.warning(f"⚠️ [PENDING ACTION STATE MACHINE] NO PENDING_ACTION in metadata, trying FALLBACK extraction...")
+
+                # FALLBACK: Extract task ID directly from the assistant message
+                # If metadata wasn't stored, try to find ID in the message itself
+                fallback_id_patterns = [
+                    r'\(ID:\s*(\d+)\)',                  # (ID: 42)
+                    r'ID[:\s]+(\d+)',                     # ID: 42
+                    r'task\s+#?(\d+)',                    # task 42
+                ]
+
+                fallback_id = None
+                for pattern in fallback_id_patterns:
+                    match = re.search(pattern, last_assistant_msg.content, re.IGNORECASE)
+                    if match:
+                        fallback_id = int(match.group(1))
+                        logger.warning(f"✅ [PENDING ACTION STATE MACHINE] FALLBACK SUCCESS: Extracted task_id={fallback_id} from message")
+                        break
+
+                if not fallback_id:
+                    logger.error(f"🔴 [PENDING ACTION STATE MACHINE] CRITICAL: NO PENDING_ACTION in metadata AND no ID in message!")
+                    logger.error(f"    Message content: '{last_assistant_msg.content[:200]}'")
+                    return None
+
+                # Create a minimal pending_action from extracted ID
+                pending = {
+                    "type": "delete_task",
+                    "task_id": fallback_id,
+                    "task_title": "task",
+                    "awaiting_confirmation": True
+                }
+                logger.warning(f"✅ [PENDING ACTION STATE MACHINE] Using FALLBACK pending_action: {pending}")
+            else:
+                pending = metadata.get("pending_action")
 
             logger.warning(f"✅ [PENDING ACTION STATE MACHINE] FOUND pending_action in metadata!")
 
