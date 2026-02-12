@@ -736,21 +736,20 @@ Be friendly and natural while staying focused on task management."""
             try:
                 logger.info(f"[AGENT EXECUTION] Running agent. Current message: {user_message[:100]}...")
 
-                # Build full conversation context including the new user message
+                # Build full conversation context for reference (not directly passed to agent)
+                # Note: OpenAI Agents SDK runner.run() does NOT accept messages parameter
+                # Context is available through tools and agent instructions
                 full_context = context_messages + [{"role": "user", "content": user_message}]
+                logger.info(f"[AGENT EXECUTION] Available context: {len(full_context)} messages in conversation history")
 
-                # Log the context that will be provided to the agent
-                logger.info(f"[AGENT EXECUTION] Providing {len(full_context)} messages to agent context (including current user message)")
-                if full_context:
-                    context_summary = [f"{m['role']}: {m['content'][:50]}..." for m in full_context]
-                    logger.debug(f"[AGENT EXECUTION] Context messages: {context_summary}")
-
-                # Execute agent with conversation history
-                # The OpenAI Agents SDK can accept messages parameter for conversation context
+                # Execute agent with task tools
+                # Agent follows instructions which guide behavior for deletion confirmations
+                # Deletion is handled by:
+                # 1. handle_pending_action() intercepts on turn 2 (preferred, fast path)
+                # 2. Agent instructions guide multi-turn deletion if needed (fallback)
                 result = await runner.run(
                     starting_agent=agent,
                     input=user_message,
-                    messages=full_context,  # Pass full conversation history for context
                 )
                 logger.info(f"[AGENT EXECUTION] Agent completed successfully")
 
