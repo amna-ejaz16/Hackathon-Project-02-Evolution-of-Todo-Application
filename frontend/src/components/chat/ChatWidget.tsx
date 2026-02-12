@@ -204,7 +204,7 @@ export default function ChatWidget({ onTaskChange }: ChatWidgetProps) {
           timestamp: new Date().toISOString(),
         })
 
-        let errorContent = ERROR_MESSAGES.GENERIC
+        let errorContent: string = ERROR_MESSAGES.GENERIC
         let shouldSuggestRefresh = false
 
         // Determine error type and set appropriate message
