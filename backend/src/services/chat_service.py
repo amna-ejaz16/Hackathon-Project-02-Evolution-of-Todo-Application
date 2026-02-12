@@ -813,6 +813,28 @@ Be friendly and natural while staying focused on task management."""
                 full_context = context_messages + [{"role": "user", "content": user_message}]
                 logger.info(f"[AGENT EXECUTION] Available context: {len(full_context)} messages in conversation history")
 
+                # ENHANCEMENT: If user is confirming and there's a pending delete, add task context to input
+                agent_input = user_message
+
+                # Check if this might be a confirmation (yes, ok, etc.)
+                if is_confirmation(user_message) or is_cancellation(user_message):
+                    # Look for pending deletion in last assistant message
+                    last_msg = session.exec(
+                        select(Message)
+                        .where(Message.conversation_id == conversation_id, Message.role == "assistant")
+                        .order_by(Message.created_at.desc())
+                        .limit(1)
+                    ).first()
+
+                    if last_msg and "delete" in last_msg.content.lower():
+                        # Extract task ID from last message
+                        id_match = re.search(r'\(ID:\s*(\d+)\)', last_msg.content)
+                        if id_match:
+                            task_id_from_msg = id_match.group(1)
+                            # Enhance input with task context for agent
+                            agent_input = f"{user_message}\n\n[Task Context: Regarding the task (ID: {task_id_from_msg}) that you just asked about]"
+                            logger.warning(f"✅ [AGENT INPUT ENHANCEMENT] Added task context: ID={task_id_from_msg}")
+
                 # Execute agent with task tools
                 # Agent follows instructions which guide behavior for deletion confirmations
                 # Deletion is handled by:
@@ -820,7 +842,7 @@ Be friendly and natural while staying focused on task management."""
                 # 2. Agent instructions guide multi-turn deletion if needed (fallback)
                 result = await runner.run(
                     starting_agent=agent,
-                    input=user_message,
+                    input=agent_input,
                 )
                 logger.info(f"[AGENT EXECUTION] Agent completed successfully")
 
