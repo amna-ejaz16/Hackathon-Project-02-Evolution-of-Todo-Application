@@ -55,7 +55,7 @@ const ERROR_MESSAGES = {
   SESSION_EXPIRED: "Session expired, please refresh the page.",
   SERVER_ERROR: "Server error. Please try again in a moment.",
   GENERIC: "Sorry, something went wrong. Please try again.",
-} as const
+}
 
 export default function ChatWidget({ onTaskChange }: ChatWidgetProps) {
   const [isOpen, setIsOpen] = useState(false)
@@ -205,7 +205,7 @@ export default function ChatWidget({ onTaskChange }: ChatWidgetProps) {
           timestamp: new Date().toISOString(),
         })
 
-        let errorContent: typeof ERROR_MESSAGES[keyof typeof ERROR_MESSAGES] = ERROR_MESSAGES.GENERIC
+        let errorContent: string = ERROR_MESSAGES.GENERIC
         let shouldSuggestRefresh = false
 
         // Determine error type and set appropriate message
