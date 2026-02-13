@@ -53,6 +53,7 @@ const ERROR_MESSAGES = {
   SERVICE_UNAVAILABLE: "I'm having trouble connecting right now. Please try again in a moment.",
   NETWORK_ERROR: "Connection lost. Please check your internet and try again.",
   SESSION_EXPIRED: "Session expired, please refresh the page.",
+  SERVER_ERROR: "Server error. Please try again in a moment.",
   GENERIC: "Sorry, something went wrong. Please try again.",
 } as const
 
@@ -224,7 +225,7 @@ export default function ChatWidget({ onTaskChange }: ChatWidgetProps) {
           status === 504
         ) {
           // Server errors - suggest retry
-          errorContent = "Server error. Please try again in a moment."
+          errorContent = ERROR_MESSAGES.SERVER_ERROR
         } else if (
           errorType === 'NetworkError' ||
           errorType === 'TypeError' ||
