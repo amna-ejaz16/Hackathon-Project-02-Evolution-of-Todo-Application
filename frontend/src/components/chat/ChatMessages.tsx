@@ -1,15 +1,9 @@
 "use client";
 
 import { useRef, useEffect } from "react";
+import { Message } from "@/types/chat";
 import ChatMessage from "./ChatMessage";
 import TypingIndicator from "./TypingIndicator";
-
-interface Message {
-  id: number;
-  role: string;
-  content: string;
-  created_at: string;
-}
 
 interface ChatMessagesProps {
   messages: Message[];

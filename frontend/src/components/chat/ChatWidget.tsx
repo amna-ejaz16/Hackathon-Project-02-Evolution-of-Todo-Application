@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { motion, AnimatePresence, PanInfo } from 'framer-motion'
 import { api } from '@/lib/api'
 import { logError, extractErrorDetails } from '@/lib/errorLogger'
+import { Message, ChatApiResponse, HistoryMessage, HistoryResponse } from '@/types/chat'
 import ChatHeader from './ChatHeader'
 import ChatMessages from './ChatMessages'
 import ChatInput from './ChatInput'
@@ -11,34 +12,6 @@ import QuickActionPills from './QuickActionPills'
 
 interface ChatWidgetProps {
   onTaskChange: () => void
-}
-
-interface Message {
-  id: number | string
-  role: 'user' | 'assistant'
-  content: string
-  created_at: string
-}
-
-interface ChatApiResponse {
-  response: string
-  conversation_id: number
-  action?: string | null
-  task_id?: number | null
-}
-
-interface HistoryMessage {
-  id: number
-  role: 'user' | 'assistant'
-  content: string
-  metadata?: Record<string, unknown> | null
-  created_at: string
-}
-
-interface HistoryResponse {
-  messages: HistoryMessage[]
-  conversation_id: number | null
-  total: number
 }
 
 const WELCOME_MESSAGE: Message = {
